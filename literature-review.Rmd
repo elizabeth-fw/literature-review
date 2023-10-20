@@ -1,0 +1,25 @@
+---
+title: "literature-review"
+author: "Elizabeth Williams"
+date: "2023-10-20"
+output: html_document
+---
+
+# Quantitative Literature Review on Forest Succession Post-Landslide Disturbance
+
+## Load Packages
+
+```{r}
+library(revtools)
+library(synthesisr)
+```
+
+## Import data from working directory
+
+```{r}
+# review resources on how to do this
+
+```
+
+
+
