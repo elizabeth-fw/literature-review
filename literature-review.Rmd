@@ -1,7 +1,7 @@
 ---
 title: "literature-review"
 author: "Elizabeth Williams"
-date: "2023-10-20"
+date: "2023-10-25"
 output: html_document
 ---
 
@@ -9,17 +9,35 @@ output: html_document
 
 ## Load Packages
 
-```{r}
+```{r load packages, message = FALSE}
 library(revtools)
 library(synthesisr)
 ```
 
 ## Import data from working directory
 
-```{r}
-# review resources on how to do this
+```{r import data}
+# use relative file path to read ris files & create one data frame
+
+ris_files <- list.files(path = "raw_data", pattern = ".ris", full.names = TRUE)
+
+raw_data <- read_refs(ris_files, return_df = TRUE, verbose = TRUE)
 
 ```
 
+## Data wrangling
 
+```{r data wrangling}
+# make all results lowercase
+
+
+# find and remove results that are not journals (conference papers, obituaries, etc.)
+
+
+# find and remove duplicates by DOI
+
+
+# find and remove duplicates by title
+
+```
 
