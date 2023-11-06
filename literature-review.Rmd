@@ -12,6 +12,16 @@ output: html_document
 ```{r load packages, message = FALSE}
 library(revtools)
 library(synthesisr)
+library(dplyr)
+library(janitor)
+library(tidyverse)
+library(stringr)
+library(tidytext)
+library(widyr)
+library(ggraph)
+library(ggplot2)
+library(igraph)
+library(base)
 ```
 
 ## Import data from working directory
@@ -21,23 +31,138 @@ library(synthesisr)
 
 ris_files <- list.files(path = "raw_data", pattern = ".ris", full.names = TRUE)
 
-raw_data <- read_refs(ris_files, return_df = TRUE, verbose = TRUE)
+data_raw <- read_refs(ris_files, return_df = TRUE, verbose = TRUE)
 
 ```
 
 ## Data wrangling
 
 ```{r data wrangling}
-# make all results lowercase
+# make all column names & observations lowercase & remove italics characters from title
+
+data_lowercase <- data_raw %>%
+  clean_names() %>%
+  mutate_all(.funs=tolower) %>%
+  mutate(title = str_replace_all(title, "<i>", "")) %>%
+  mutate(title = str_replace_all(title, "</i>", ""))
+
+# complete missing values in source type column from zz
+
+data_lowercase <- data_lowercase %>%
+    mutate(source_type = ifelse(is.na(source_type) & str_detect(zz, "-"), zz, source_type)) %>%
+    mutate(source_type = str_replace(source_type, "ty  - ", "")) %>%
+    mutate(source_type = str_replace(source_type, "﻿", ""))
+
+#update database column to include wos
+
+data_lowercase <- data_lowercase %>%
+  mutate(database = ifelse(is.na(database), "wos", "scopus"))
+
+#extract citations information from notes column (optional later)
 
 
-# find and remove results that are not journals (conference papers, obituaries, etc.)
 
+#remove unnecessary columns
 
-# find and remove duplicates by DOI
-
-
-# find and remove duplicates by title
+data_wrangled <- select(data_lowercase, -c("a1", "ji", "j9", "c6", "date_generated", "supertaxa", "a2", "fu", "fx", "edition", "url", "cr", "accession_zr", "proceedings_title", "pubmed_id", "chemicals", "source_abbreviated", "zz"))
 
 ```
 
+##Data selection
+
+```{r data selection}
+# find and remove results in languages other than english
+
+data_english <- data_wrangled%>%
+  filter(language == "english")
+
+# find and remove duplicates by DOI
+
+data_unique_doi <- deduplicate(data_english, "doi", method = "exact")
+
+# find and remove duplicates by title
+
+data_unique <- deduplicate(data_unique_doi, "title", rm_punctuation = TRUE)
+
+
+# filtering for landslide specific projects by title/keyword
+
+strings <- c("landsli", "mudsli", "debris flow")
+
+data_unique <- data_unique %>%
+  mutate(relevant_title = (str_detect(title, paste(strings, collapse = "|")))) %>%
+  mutate(relevant_keyword = (str_detect(keywords, paste(strings, collapse = "|")))) %>%
+  mutate(relevant = if_any(.cols = contains('relevant')))
+
+data_landslides <- data_unique %>%
+  filter(relevant == "TRUE")
+
+```
+## keywords cooccurances
+
+Look At:
+text mining with R 
+need tidytext
+
+```{r keywords cooccurances}
+
+#make tidy data for keywords
+
+keywords_tmp <- tibble(id = 1:401, title = data_landslides$title, keywords = data_landslides$keywords)
+
+keywords <- keywords_tmp %>%
+  unnest_tokens(word, keywords, token = str_split, pattern = " and ") %>%
+  anti_join(stop_words)
+
+keywords %>%
+  count(word, sort=TRUE)
+
+# visualize keyword cooccurance
+
+keyword_pairs <- keywords %>%
+  pairwise_count(word, id, sort = TRUE)
+
+set.seed(1234)
+keyword_pairs %>%
+  filter (n >= 10) %>%
+  graph_from_data_frame()%>%
+  ggraph (layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n, edge_width = n), edge_colour = "royalblue") +
+  geom_node_point(size = 2) +
+  geom_node_text(aes(label = name), repel = TRUE, size = 2,
+                 point.padding = unit(0.2, "lines")) +
+  theme_void()
+
+#visualize keyword correlations
+
+keyword_cors <- keywords %>%
+  group_by(word) %>%
+  filter(n() >= 5) %>%
+  pairwise_cor(word, id, sort = TRUE)
+
+set.seed(1234)
+keyword_cors %>%
+  filter(correlation > .5) %>%
+  graph_from_data_frame() %>%
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(edge_alpha = correlation, edge_width = correlation), edge_colour = "royalblue") +
+  geom_node_point(size = 2) +
+  geom_node_text(aes(label = name), repel = TRUE, size = 2, 
+                 point.padding = unit(0.01, "lines")) +
+  theme_void()
+
+```
+
+## Abstract screening
+```{r abtract screening}
+
+for (i in 30:401) {
+  data_landslides[,i] <- NA  
+}
+
+screening_second <- screen_abstracts(data_landslides)
+
+
+
+
+```
