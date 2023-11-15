@@ -1,0 +1,195 @@
+---
+title: "literature-review"
+author: "Elizabeth Williams"
+date: "2023-10-25"
+output: html_document
+---
+
+# Quantitative Literature Review on Forest Succession Post-Landslide Disturbance
+
+## Load Packages
+
+```{r load packages, message = FALSE}
+library(litsearchr)
+library(revtools)
+library(synthesisr)
+library(dplyr)
+library(janitor)
+library(tidyverse)
+library(stringr)
+library(tidytext)
+library(widyr)
+library(ggraph)
+library(ggplot2)
+library(igraph)
+library(base)
+```
+
+
+## Import data from working directory
+
+```{r import data}
+# use relative file path to read ris files & create one data frame
+
+ris_files <- list.files(path = "archive/2023-10-24_raw_data", pattern = ".ris", full.names = TRUE)
+
+data_raw <- read_refs(ris_files, return_df = TRUE, verbose = TRUE)
+
+```
+
+## Data wrangling
+
+```{r data wrangling}
+# make all column names & observations lowercase & remove italics characters from title
+
+data_lowercase <- data_raw %>%
+  clean_names() %>%
+  mutate_all(.funs=tolower) %>%
+  mutate(title = str_replace_all(title, "<i>", "")) %>%
+  mutate(title = str_replace_all(title, "</i>", ""))
+
+# complete missing values in source type column from zz
+
+data_lowercase <- data_lowercase %>%
+    mutate(source_type = ifelse(is.na(source_type) & str_detect(zz, "-"), zz, source_type)) %>%
+    mutate(source_type = str_replace(source_type, "ty  - ", "")) %>%
+    mutate(source_type = str_replace(source_type, "﻿", ""))
+
+#update database column to include wos
+
+data_lowercase <- data_lowercase %>%
+  mutate(database = ifelse(is.na(database), "wos", "scopus"))
+
+#extract citations information from notes column (optional later)
+
+
+
+#remove unnecessary columns
+
+data_wrangled <- select(data_lowercase, -c("a1", "ji", "j9", "c6", "date_generated", "supertaxa", "a2", "fu", "fx", "edition", "url", "cr", "accession_zr", "proceedings_title", "pubmed_id", "chemicals", "source_abbreviated", "zz"))
+
+```
+
+##Data selection
+
+```{r data selection}
+# find and remove results in languages other than english
+
+data_english <- data_wrangled%>%
+  filter(language == "english")
+
+# find and remove duplicates by DOI
+
+data_unique_doi <- deduplicate(data_english, "doi", method = "exact")
+
+# find and remove duplicates by title
+
+data_unique <- deduplicate(data_unique_doi, "title", rm_punctuation = TRUE)
+
+
+# filtering for landslide specific projects by title/keyword
+
+strings <- c("landsli", "mudsli", "debris flow")
+
+data_unique <- data_unique %>%
+  mutate(relevant_title = (str_detect(title, paste(strings, collapse = "|")))) %>%
+  mutate(relevant_keyword = (str_detect(keywords, paste(strings, collapse = "|")))) %>%
+  mutate(relevant = if_any(.cols = contains('relevant')))
+
+data_landslides <- data_unique %>%
+  filter(relevant == "TRUE")
+
+```
+
+## Develop search terms
+
+#keywords
+```{r keywords}
+
+naive_results <- data_unique
+
+sum(is.na(naive_results[,"keywords"]))
+
+naive_keywords <- extract_terms(keywords = naive_results[,"keywords"], method = "tagged", min_freq = 10 , min_n=1)
+
+```
+
+#titles & abstracts
+```{r titles & abstracts}
+
+all_stopwords <- get_stopwords("English")
+
+title_terms <- extract_terms(text = naive_results[, "title"], method = "fakerake", min_freq=10, min_n=2, stopwords = "all_stopwords")
+
+terms <- unique(c(naive_keywords, title_terms))
+
+```
+
+#network analysis
+```{r network analysis}
+docs <- paste(naive_results[, "title"], naive_results[, "abstract"])
+
+dfm <- create_dfm(elements = docs, features = terms)
+
+g <- create_network(dfm, min_studies = 10)
+ 
+ggraph(g, layout="stress") +
+  coord_fixed() +
+  expand_limits(x=c(-3, 3)) +
+  geom_edge_link(aes(alpha=weight)) +
+  geom_node_point(shape="circle filled", fill="white") +
+  geom_node_text(aes(label=name), hjust="outward", check_overlap=TRUE) +
+  guides(edge_alpha=FALSE)
+```
+
+#pruning
+```{r pruning}
+strengths <- strength(g)
+
+data.frame(term=names(strengths), strength=strengths, row.names=NULL) %>%
+  mutate(rank=rank(strength, ties.method="min")) %>%
+  arrange(strength) ->
+  term_strengths
+
+term_strengths
+
+cutoff_fig <- ggplot(term_strengths, aes(x=rank, y=strength, label=term)) +
+  geom_line() +
+  geom_point() +
+  geom_text(data=filter(term_strengths, rank>5), hjust="right", nudge_y=20, check_overlap=TRUE)
+
+cutoff_fig
+
+cutoff_cum <- find_cutoff(g, method="cumulative", percent=0.8)
+
+cutoff_cum
+
+cutoff_fig +
+  geom_hline(yintercept=cutoff_cum, linetype="dashed")
+
+get_keywords(reduce_graph(g, cutoff_cum))
+
+cutoff_change <- find_cutoff(g, method="changepoint", knot_num=3)
+
+cutoff_change
+
+cutoff_fig +
+  geom_hline(yintercept=cutoff_change, linetype="dashed")
+
+g_redux <- reduce_graph(g, cutoff_change[1])
+selected_terms <- get_keywords(g_redux)
+
+selected_terms
+```
+
+# grouping
+```{r grouping}
+grouped_terms <- list(
+  landslide = selected_terms[c(5, 19)],
+  succession = selected_terms[c(17, 27, 28, 29, 33)],
+  ecosystem = selected_terms[c(8, 11, 15, 23, 34, 36)]
+)
+
+grouped_terms
+
+```

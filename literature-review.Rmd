@@ -87,7 +87,7 @@ data_unique <- deduplicate(data_unique_doi, "title", rm_punctuation = TRUE)
 
 # filtering for landslide specific projects by title/keyword
 
-strings <- c("landsli", "mudsli", "debris flow")
+strings <- c("landsli", "mudsli", "rocksli", "mass movement", "mass wast", "debris avalanche", "debris flow", "mudflow", "rockflow", "lahar")
 
 data_unique <- data_unique %>%
   mutate(relevant_title = (str_detect(title, paste(strings, collapse = "|")))) %>%
@@ -100,15 +100,12 @@ data_landslides <- data_unique %>%
 ```
 ## keywords cooccurances
 
-Look At:
-text mining with R 
-need tidytext
 
 ```{r keywords cooccurances}
 
 #make tidy data for keywords
 
-keywords_tmp <- tibble(id = 1:401, title = data_landslides$title, keywords = data_landslides$keywords)
+keywords_tmp <- tibble(id = 1:1674, title = data_landslides$title, keywords = data_landslides$keywords)
 
 keywords <- keywords_tmp %>%
   unnest_tokens(word, keywords, token = str_split, pattern = " and ") %>%
@@ -124,12 +121,12 @@ keyword_pairs <- keywords %>%
 
 set.seed(1234)
 keyword_pairs %>%
-  filter (n >= 10) %>%
+  filter (n >= 25) %>%
   graph_from_data_frame()%>%
   ggraph (layout = "fr") +
   geom_edge_link(aes(edge_alpha = n, edge_width = n), edge_colour = "royalblue") +
   geom_node_point(size = 2) +
-  geom_node_text(aes(label = name), repel = TRUE, size = 2,
+  geom_node_text(aes(label = name), repel = TRUE, size = 2.5,
                  point.padding = unit(0.2, "lines")) +
   theme_void()
 
@@ -147,7 +144,7 @@ keyword_cors %>%
   ggraph(layout = "fr") +
   geom_edge_link(aes(edge_alpha = correlation, edge_width = correlation), edge_colour = "royalblue") +
   geom_node_point(size = 2) +
-  geom_node_text(aes(label = name), repel = TRUE, size = 2, 
+  geom_node_text(aes(label = name), repel = TRUE, size = 2.5, 
                  point.padding = unit(0.01, "lines")) +
   theme_void()
 
@@ -156,12 +153,11 @@ keyword_cors %>%
 ## Abstract screening
 ```{r abtract screening}
 
-for (i in 30:401) {
+for (i in 30:1674) {
   data_landslides[,i] <- NA  
 }
 
-screening_second <- screen_abstracts(data_landslides)
-
+screening_third <- screen_abstracts(screening_third)
 
 
 
