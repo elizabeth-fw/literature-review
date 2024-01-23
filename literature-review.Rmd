@@ -22,6 +22,8 @@ library(ggraph)
 library(ggplot2)
 library(igraph)
 library(base)
+library(stm)
+library(wordcloud)
 ```
 
 ## Import data from working directory
@@ -105,7 +107,7 @@ data_landslides <- data_unique %>%
 
 #make tidy data for keywords
 
-keywords_tmp <- tibble(id = 1:1674, title = data_landslides$title, keywords = data_landslides$keywords)
+keywords_tmp <- tibble(id = 1:1730, title = data_landslides$title, keywords = data_landslides$keywords)
 
 keywords <- keywords_tmp %>%
   unnest_tokens(word, keywords, token = str_split, pattern = " and ") %>%
@@ -153,12 +155,187 @@ keyword_cors %>%
 ## Abstract screening
 ```{r abtract screening}
 
-for (i in 30:1674) {
-  data_landslides[,i] <- NA  
+for (i in 30:1730) {
+  data_landslides[,i] <- NA
 }
 
-screening_third <- screen_abstracts(screening_third)
-
+screening_sixth <- screen_abstracts(screening_sixth)
 
 
 ```
+
+
+## Selected Abstracts
+```{r selected abstracts}
+
+# removing unnecessary rows from abstract screening
+
+abstracts_screened <- subset(screening_fifth, select = -(30:1716))
+
+write.csv(abstracts_screened, "abstracts_screened.csv")
+
+#filter only selected abstracts
+
+abstracts_selected <- filter(abstracts_screened, screened_abstracts=="selected")
+
+write.csv(abstracts_selected, "abstracts_selected.csv")
+
+```
+
+
+## Selected Abstracts - keyword cooccurances
+
+
+```{r selected keywords cooccurances}
+
+#make tidy data for keywords
+
+keywords_tmp_2 <- tibble(id = 1:378, title = abstracts_selected$title, keywords = abstracts_selected$keywords)
+
+keywords_2 <- keywords_tmp_2 %>%
+  unnest_tokens(word, keywords, token = str_split, pattern = " and ") %>%
+  anti_join(stop_words)
+
+keywords_2 %>%
+  count(word, sort=TRUE)
+
+# visualize keyword cooccurance
+
+keyword_pairs_2 <- keywords_2 %>%
+  pairwise_count(word, id, sort = TRUE)
+
+set.seed(1234)
+keyword_pairs_2 %>%
+  filter (n >= 10) %>%
+  graph_from_data_frame()%>%
+  ggraph (layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n, edge_width = n), edge_colour = "royalblue") +
+  geom_node_point(size = 2) +
+  geom_node_text(aes(label = name), repel = TRUE, size = 3,
+                 point.padding = unit(0.2, "lines")) +
+  theme_void()
+
+#visualize keyword correlations
+
+keyword_cors_2 <- keywords_2 %>%
+  group_by(word) %>%
+  filter(n() >= 4) %>%
+  pairwise_cor(word, id, sort = TRUE)
+
+set.seed(1234)
+keyword_cors_2 %>%
+  filter(correlation > .5) %>%
+  graph_from_data_frame() %>%
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(edge_alpha = correlation, edge_width = correlation), edge_colour = "royalblue") +
+  geom_node_point(size = 2) +
+  geom_node_text(aes(label = name), repel = TRUE, size = 3, 
+                 point.padding = unit(0.01, "lines")) +
+  theme_void()
+
+```
+
+```{r document summaries}
+
+#make tidy data for authors
+
+authors_tmp <- tibble(id = 1:378, title = abstracts_selected$title, author = abstracts_selected$author)
+
+authors <- authors_tmp %>%
+  unnest_tokens(word, author, token = str_split, pattern = " and ")
+
+authors %>%
+  count(word, sort=TRUE)
+
+
+#review document type
+
+abstracts_selected %>%
+  count(source_type, sort=TRUE)
+
+#review document years
+
+abstracts_selected %>%
+  count(year, sort=TRUE)
+
+```
+
+## Topic Modelling
+
+```{r prep topic model}
+
+# make abstracts lowercase, remove punctuation and stem words
+
+abst_processed <- textProcessor(documents = abstracts_selected$abstract, metadata = abstracts_selected, custompunctuation = c("“", "”", "‘", "£", "≥", "°" , "′", "″"))
+
+abst_vocab <- abst_processed$vocab
+
+# remove results that do not occur frequently - originally 10
+
+plotRemoved(abst_processed$documents, lower.thresh = seq(1, 200, by = 100))
+
+out <- prepDocuments(abst_processed$documents, abst_processed$vocab, abst_processed$meta, lower.thresh = 5)
+
+print(out$vocab)
+
+```
+
+
+```{r topic modelling}
+
+#test various k values (number of topics)
+
+Ktrial <- searchK(out$documents, out$vocab, K = c(4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24), data = out$meta, verbose = FALSE)
+
+plot(Ktrial)
+
+
+#run topic model
+
+abst_model <- stm(documents = out$documents, vocab = out$vocab, K = 12, max.em.its = 75, data = out$meta, init.type = "Spectral", verbose = FALSE)
+
+```
+
+
+```{r visualize topic model}
+
+labelTopics(abst_model)
+
+plot(abst_model, type = "summary", xlim = c(0, 0.3))
+
+cloud(abst_model, scale = c(3, 0.5))
+
+out_corr <- topicCorr(abst_model)
+
+plot(out_corr)
+
+```
+
+
+```{r }
+
+checkBeta(abst_model)
+
+cloud(abst_model, topic = NULL, type = c("model", "documents"), documents, thresh = 0.9, max.words = 100)
+
+```
+
+
+
+## Re-screen Abstracts
+```{r re-screen abstracts}
+
+abst_rescreen <- abstracts_selected
+
+colnames(abst_rescreen)[30] = "first screening"
+
+for (i in 31:378) {
+  abst_rescreen[,i] <- NA  
+}
+
+
+rescreening_first <- screen_abstracts(abst_rescreen)
+
+
+```
+
