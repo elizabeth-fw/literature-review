@@ -1,0 +1,198 @@
+---
+title: "results"
+author: "Elizabeth Williams"
+date: "2024-07-23"
+output: html_document
+---
+
+# Quantitative Literature Review on Forest Succession Post-Landslide Disturbance
+
+## Load Packages
+
+```{r load packages, message = FALSE}
+library(revtools)
+library(synthesisr)
+library(dplyr)
+library(janitor)
+library(tidyverse)
+library(stringr)
+library(tidytext)
+library(widyr)
+library(ggraph)
+library(ggplot2)
+library(maps)
+library(igraph)
+library(base)
+library(stm)
+library(wordcloud)
+library(sf) #vector package
+library(terra) #raster package
+```
+
+## Import data
+```{r load data, message = FALSE}
+#import metadata from read articles
+metadata_record <- read.csv("metadata_R_input.csv")
+
+#import WWF Biomes shapefile
+biomes_shp <- st_read("external_input/wwf_terr_ecos/wwf_terr_ecos.shp")
+
+#import world clim 2.1 solar radiation for Jan-Dec 1970-2000
+srad_files <- list.files("external_input/wc2.1_30s_srad", pattern = "\\.tif", full.names = TRUE)
+srad_raster <- rast(srad_files)
+
+#import world clim 2.1 bio variables for Jan-Dec 1970-2000
+bioclim_files <-list.files("external_input/wc2.1_30s_bio", pattern = "\\.tif", full.names = TRUE)
+bioclim_raster <- rast(bioclim_files)
+
+```
+
+## Clean Biomes Data
+```{r clean biomes data}
+invalid_geometries <- !st_is_valid(biomes_shp)
+if (any(invalid_geometries)) {
+  # Print which features are invalid
+  print(which(invalid_geometries))
+}
+
+# Fix invalid geometries
+wwf_biomes <- st_make_valid(biomes_shp)
+
+```
+
+
+## Sort data
+```{r sort data, message = FALSE}
+#remove articles not available for download
+rm_download <- metadata_record %>%
+  filter(grepl("TRUE", download, ignore.case = TRUE))
+
+#remove articles not in english
+rm_english <- rm_download %>%
+  filter(grepl("TRUE", english, ignore.case = TRUE))
+
+#remove all non-primary/not-peer-reviewed research
+rm_article <- rm_english %>%
+  filter(
+    grepl ("FALSE", review, ignore.case = TRUE) &
+       grepl ("FALSE", conference, ignore.case = TRUE) &
+       grepl ("FALSE", report_other, ignore.case = TRUE)
+    )
+
+#remove all dendrogeomorph/disturbance history reconstruction
+rm_dendrogeo <- rm_article %>%
+  filter(grepl("FALSE", dendrogeo, ignore.case = TRUE))
+
+#remove all listed as "reject_other"
+sorted_data <- rm_dendrogeo %>%
+  filter(grepl("FALSE", reject_other, ignore.case = TRUE))
+
+#clean unnecessary columns
+clean_data <- select(sorted_data, -c(database, document_type, language, volume, article_number, notes, source_type, issue, start_page, end_page, place_published, pi, we, cp, filename,
+                                     n_duplicates, relevant_title, relevant_keyword, relevant, first_screening, screened_titles, second_screen, download, research_rabbit, english, 
+                                     review, conference, report_other, dendrogeo, reject_other, coordinates, riparian))
+
+```
+
+
+## Extra sorting
+```{r extra sorting, message = FALSE}
+#isolate modelling papers
+predict_model <- clean_data %>%
+  filter(str_detect(study_method, "model") | str_detect(forecast_model, "TRUE"))
+
+#isolate field & remote sensing papers
+field_rs_data <- clean_data %>%
+  filter(str_detect(study_method, "remote") | str_detect(study_method, "field"))
+
+```
+
+
+## add data from coordinates
+```{r add data from coordinates, message = FALSE}
+# clean coordinates
+field_rs_data <- field_rs_data %>%
+  separate(approx_coord, into = c("lat", "long"), sep = ", ", convert = TRUE)
+
+coord_sf <- st_as_sf(field_rs_data, coords = c("long", "lat"), crs = 4326)
+
+
+#extract worldclim 2.1 data from coordinates
+clim_value <- extract(bioclim_raster, coord_sf, method = "simple")
+
+srad_value <- extract(srad_raster, coord_sf, method = "simple")
+
+srad_value <- srad_value %>%
+  mutate(srad_avg = rowMeans(select(.,2:13), na.rm = TRUE))
+
+field_rs_data <- cbind(field_rs_data, clim_value[,-1]) #exclude 1 - ID column
+field_rs_data$srad_avg <- srad_value$srad_avg
+
+#extract wwf biomes data from coordinates
+biome_value <- st_join(coord_sf, wwf_biomes, join = st_intersects)
+
+field_rs_data$biome <- biome_value$BIOME
+field_rs_data$eco_name <- biome_value$ECO_NAME
+
+```
+
+## Seperate field & remote sensing studies
+```{r split field & rs data, message = FALSE}
+
+
+```
+
+
+## Map of research
+```{r research map}
+# intensity map of countries of all studies
+countries_split <- clean_data %>%
+  separate_rows(country, sep = ", ") %>%
+  mutate(country = case_when(
+    country == "scotland" ~ "uk",
+    country == "england" ~ "uk",
+    country == "united states" ~ "usa",
+    TRUE ~ country
+  ))
+  
+country_counts <- countries_split %>%
+  count(country, name = "papers")
+
+world_map <- map_data("world")
+world_map$region <- tolower(world_map$region)
+
+map_data <- world_map %>%
+  left_join(country_counts, by = c("region" = "country"))
+
+ggplot(map_data, aes(x = long, y = lat, group = group)) +
+  geom_polygon(aes(fill = papers), color = "white") +
+  scale_fill_gradient(low = "lightblue", high = "darkblue", na.value = "gray") +
+  theme_minimal() +
+  labs(title = "Color Intensity Map Based on Frequency of Studies",
+       fill = "Papers")
+
+
+# dot map of all field & RS studies
+ggplot() +
+  borders("world", colour = "gray85", fill = "gray80") +  # Plot the world map
+  geom_point(data = field_rs_data, aes(x = long, y = lat), color = "red", size = 1) +  # Add points
+  theme_minimal() +
+  labs(title = "Distribution of field & rs research",
+       x = "Longitude",
+       y = "Latitude")
+
+```
+
+## Quick Stats
+```{r quick stats}
+
+table(sorted_data$bio.exp)
+table(sorted_data$structural)
+table(sorted_data$country)
+table(sorted_data$slip_driver)
+table(sorted_data$exotic)
+
+```
+
+
+

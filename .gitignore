@@ -1,0 +1,10 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+archive/
+data_add/
+data_external/
+data_raw/
+data_working/
+results/

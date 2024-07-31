@@ -1,0 +1,355 @@
+---
+title: "screening"
+author: "Elizabeth Williams"
+date: "2024-07-23"
+output: html_document
+---
+
+# Quantitative Literature Review on Forest Succession Post-Landslide Disturbance
+
+## Load Packages
+
+```{r load packages, message = FALSE}
+library(revtools)
+library(synthesisr)
+library(dplyr)
+library(janitor)
+library(tidyverse)
+library(stringr)
+library(tidytext)
+library(widyr)
+library(ggraph)
+library(ggplot2)
+library(igraph)
+library(base)
+library(stm)
+library(wordcloud)
+```
+
+## Import data from working directory
+
+```{r import data}
+# use relative file path to read ris files & create one data frame
+
+ris_files <- list.files(path = "raw_data", pattern = ".ris", full.names = TRUE)
+
+data_raw <- read_refs(ris_files, return_df = TRUE, verbose = TRUE)
+
+```
+
+## Data wrangling
+
+```{r data wrangling}
+# make all column names & observations lowercase & remove italics characters from title
+
+data_lowercase <- data_raw %>%
+  clean_names() %>%
+  mutate_all(.funs=tolower) %>%
+  mutate(title = str_replace_all(title, "<i>", "")) %>%
+  mutate(title = str_replace_all(title, "</i>", ""))
+
+# complete missing values in source type column from zz
+
+data_lowercase <- data_lowercase %>%
+    mutate(source_type = ifelse(is.na(source_type) & str_detect(zz, "-"), zz, source_type)) %>%
+    mutate(source_type = str_replace(source_type, "ty  - ", "")) %>%
+    mutate(source_type = str_replace(source_type, "﻿", ""))
+
+#update database column to include wos
+
+data_lowercase <- data_lowercase %>%
+  mutate(database = ifelse(is.na(database), "wos", "scopus"))
+
+#extract citations information from notes column (optional later)
+
+
+
+#remove unnecessary columns
+
+data_wrangled <- select(data_lowercase, -c("a1", "ji", "j9", "c6", "date_generated", "supertaxa", "a2", "fu", "fx", "edition", "url", "cr", "accession_zr", "proceedings_title", "pubmed_id", "chemicals", "source_abbreviated", "zz"))
+
+```
+
+##Data selection
+
+```{r data selection}
+# find and remove results in languages other than english
+
+data_english <- data_wrangled%>%
+  filter(language == "english")
+
+# find and remove duplicates by DOI
+
+data_unique_doi <- deduplicate(data_english, "doi", method = "exact")
+
+# find and remove duplicates by title
+
+data_unique <- deduplicate(data_unique_doi, "title", rm_punctuation = TRUE)
+
+
+# filtering for landslide specific projects by title/keyword
+
+strings <- c("landsli", "mudsli", "rocksli", "mass movement", "mass wast", "debris avalanche", "debris flow", "mudflow", "rockflow", "lahar")
+
+data_unique <- data_unique %>%
+  mutate(relevant_title = (str_detect(title, paste(strings, collapse = "|")))) %>%
+  mutate(relevant_keyword = (str_detect(keywords, paste(strings, collapse = "|")))) %>%
+  mutate(relevant = if_any(.cols = contains('relevant')))
+
+data_landslides <- data_unique %>%
+  filter(relevant == "TRUE")
+
+```
+## keywords cooccurances
+
+
+```{r keywords cooccurances}
+
+#make tidy data for keywords
+
+keywords_tmp <- tibble(id = 1:1730, title = data_landslides$title, keywords = data_landslides$keywords)
+
+keywords <- keywords_tmp %>%
+  unnest_tokens(word, keywords, token = str_split, pattern = " and ") %>%
+  anti_join(stop_words)
+
+keywords %>%
+  count(word, sort=TRUE)
+
+# visualize keyword cooccurance
+
+keyword_pairs <- keywords %>%
+  pairwise_count(word, id, sort = TRUE)
+
+set.seed(1234)
+keyword_pairs %>%
+  filter (n >= 25) %>%
+  graph_from_data_frame()%>%
+  ggraph (layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n, edge_width = n), edge_colour = "royalblue") +
+  geom_node_point(size = 2) +
+  geom_node_text(aes(label = name), repel = TRUE, size = 2.5,
+                 point.padding = unit(0.2, "lines")) +
+  theme_void()
+
+#visualize keyword correlations
+
+keyword_cors <- keywords %>%
+  group_by(word) %>%
+  filter(n() >= 5) %>%
+  pairwise_cor(word, id, sort = TRUE)
+
+set.seed(1234)
+keyword_cors %>%
+  filter(correlation > .5) %>%
+  graph_from_data_frame() %>%
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(edge_alpha = correlation, edge_width = correlation), edge_colour = "royalblue") +
+  geom_node_point(size = 2) +
+  geom_node_text(aes(label = name), repel = TRUE, size = 2.5, 
+                 point.padding = unit(0.01, "lines")) +
+  theme_void()
+
+```
+
+## Abstract screening
+```{r abtract screening}
+
+for (i in 30:1730) {
+  data_landslides[,i] <- NA
+}
+
+screening_first <- screen_abstracts(screening_first)
+
+
+```
+
+
+## Selected Abstracts
+```{r selected abstracts}
+
+# removing unnecessary rows from abstract screening
+
+abstracts_screened <- subset(screening_first, select = -(30:1730))
+
+write.csv(abstracts_screened, "abstracts_screened.csv")
+
+#filter only selected abstracts
+
+abstracts_selected <- filter(abstracts_screened, screened_abstracts=="selected")
+
+write.csv(abstracts_selected, "abstracts_selected.csv")
+
+```
+
+
+## Selected Papers
+
+```{r selected abstracts}
+
+# removing unnecessary rows from abstract screening
+
+selected_papers <- read.csv("Download_tracking.csv")
+
+```
+
+
+## Selected Abstracts - keyword cooccurances
+
+
+```{r selected keywords cooccurances}
+
+#make tidy data for keywords
+
+keywords_tmp_2 <- tibble(id = 1:235, title = selected_papers$title, keywords = selected_papers$keywords)
+
+keywords_2 <- keywords_tmp_2 %>%
+  unnest_tokens(word, keywords, token = str_split, pattern = " and ") %>%
+  anti_join(stop_words)
+
+keywords_2 %>%
+  count(word, sort=TRUE)
+
+# visualize keyword cooccurance
+
+keyword_pairs_2 <- keywords_2 %>%
+  pairwise_count(word, id, sort = TRUE)
+
+set.seed(1234)
+keyword_pairs_2 %>%
+  filter (n >= 10) %>%
+  graph_from_data_frame()%>%
+  ggraph (layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n, edge_width = n), edge_colour = "royalblue") +
+  geom_node_point(size = 2) +
+  geom_node_text(aes(label = name), repel = TRUE, size = 3,
+                 point.padding = unit(0.2, "lines")) +
+  theme_void()
+
+#visualize keyword correlations
+
+keyword_cors_2 <- keywords_2 %>%
+  group_by(word) %>%
+  filter(n() >= 4) %>%
+  pairwise_cor(word, id, sort = TRUE)
+
+set.seed(1234)
+keyword_cors_2 %>%
+  filter(correlation > .5) %>%
+  graph_from_data_frame() %>%
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(edge_alpha = correlation, edge_width = correlation), edge_colour = "royalblue") +
+  geom_node_point(size = 2) +
+  geom_node_text(aes(label = name), repel = TRUE, size = 3, 
+                 point.padding = unit(0.01, "lines")) +
+  theme_void()
+
+```
+
+```{r document summaries}
+
+#make tidy data for authors
+
+authors_tmp <- tibble(id = 1:235, title = selected_papers$title, author = selected_papers$author)
+
+authors <- authors_tmp %>%
+  unnest_tokens(word, author, token = str_split, pattern = " and ")
+
+authors %>%
+  count(word, sort=TRUE)
+
+
+#review document type
+
+selected_papers %>%
+  count(source_type, sort=TRUE)
+
+#review document years
+
+selected_papers %>%
+  count(year, sort=TRUE)
+
+```
+
+## Topic Modelling
+
+```{r prep topic model}
+
+# make abstracts lowercase, remove punctuation and stem words
+
+papers_processed <- textProcessor(documents = selected_papers$abstract, metadata = selected_papers, custompunctuation = c("“", "”", "‘", "£", "≥", "°" , "′", "″"))
+
+papers_vocab <- selected_papers$vocab
+
+# remove results that do not occur frequently - originally 10
+
+#plotRemoved(selected_papers$documents, lower.thresh = seq(1, 200, by = 100))
+
+out <- prepDocuments(papers_processed$documents, papers_processed$vocab, papers_processed$meta, lower.thresh = 5)
+
+print(out$vocab)
+
+```
+
+
+```{r topic modelling}
+
+#test various k values (number of topics)
+
+Ktrial <- searchK(out$documents, out$vocab, K = c(4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24), data = out$meta, verbose = FALSE)
+
+plot(Ktrial)
+
+
+#run topic model
+
+abst_model <- stm(documents = out$documents, vocab = out$vocab, K = 12, max.em.its = 75, data = out$meta, init.type = "Spectral", verbose = FALSE)
+
+```
+
+
+```{r visualize topic model}
+
+labelTopics(abst_model)
+
+plot(abst_model, type = "summary", xlim = c(0, 0.3))
+
+cloud(abst_model, scale = c(3, 0.5))
+
+out_corr <- topicCorr(abst_model)
+
+plot(out_corr)
+
+```
+
+
+```{r }
+
+checkBeta(abst_model)
+
+cloud(abst_model, topic = NULL, type = c("model", "documents"), documents, thresh = 0.9, max.words = 100)
+
+```
+
+
+
+## Re-screen Abstracts
+```{r re-screen abstracts}
+
+abst_rescreen <- abstracts_selected
+
+colnames(abst_rescreen)[30] = "first screening"
+
+for (i in 31:380) {
+  abst_rescreen[,i] <- NA  
+}
+
+rescreening_first <- screen_abstracts(rescreening_first)
+
+rescreening_second <- screen_titles(rescreening_second)
+
+rescreening_second <- read.csv("03-15-2024 rescreen2new.csv")
+
+
+```
+

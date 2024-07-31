@@ -1,0 +1,87 @@
+---
+title: "add data test"
+output: html_document
+date: "2023-11-29"
+---
+
+```{r add data}
+add_ris_files <- list.files(path = "add_data", pattern = ".ris", full.names = TRUE)
+
+add_data_raw <- read_refs(add_ris_files, return_df = TRUE, verbose = TRUE)
+
+
+# make all column names & observations lowercase & remove italics characters from title
+
+add_data_lowercase <- add_data_raw %>%
+  clean_names() %>%
+  mutate_all(.funs=tolower) %>%
+  mutate(title = str_replace_all(title, "<i>", "")) %>%
+  mutate(title = str_replace_all(title, "</i>", ""))
+
+# complete missing values in source type column from zz
+
+add_data_lowercase <- add_data_lowercase %>%
+    mutate(source_type = ifelse(is.na(source_type) & str_detect(zz, "-"), zz, source_type)) %>%
+    mutate(source_type = str_replace(source_type, "ty  - ", "")) %>%
+    mutate(source_type = str_replace(source_type, "﻿", ""))
+
+#update database column to include wos
+
+add_data_lowercase <- add_data_lowercase %>%
+  mutate(database = ifelse(is.na(database), "wos", "scopus"))
+
+#extract citations information from notes column (optional later)
+
+
+
+#remove unnecessary columns
+
+add_data_wrangled <- select(add_data_lowercase, -c("a1", "ji", "j9", "c6", "date_generated", "supertaxa", "a2", "fu", "fx", "edition", "url", "cr", "accession_zr", "proceedings_title", "pubmed_id", "chemicals", "source_abbreviated", "zz"))
+
+
+# find and remove results in languages other than english
+
+add_data_english <- add_data_wrangled%>%
+  filter(language == "english")
+
+# find and remove duplicates by DOI
+
+add_data_unique_doi <- deduplicate(add_data_english, "doi", method = "exact")
+
+# find and remove duplicates by title
+
+add_data_unique <- deduplicate(add_data_unique_doi, "title", rm_punctuation = TRUE)
+
+
+# filtering for landslide specific projects by title/keyword
+
+strings <- c("landsli", "mudsli", "rocksli", "mass movement", "mass wast", "debris avalanche", "debris flow", "mudflow", "rockflow", "lahar")
+
+add_data_unique <- add_data_unique %>%
+  mutate(relevant_title = (str_detect(title, paste(strings, collapse = "|")))) %>%
+  mutate(relevant_keyword = (str_detect(keywords, paste(strings, collapse = "|")))) %>%
+  mutate(relevant = if_any(.cols = contains('relevant')))
+
+add_data_landslides <- add_data_unique %>%
+  filter(relevant == "TRUE")
+
+add_data_new <- anti_join(add_data_landslides, data_landslides, by = "title")
+
+write.csv(add_data_new, "add_data_new.csv")
+
+#screening_sixth <- read.csv("screening_fourth_attempt_2023-11-29.csv")
+
+```
+
+
+```{r}
+
+
+#add_abstracts_screened <- filter(abstracts_screened, title %in% add_data_landslides$title)
+
+
+#write.csv(add_abstracts_screened, "add_abstracts_screened.csv")
+
+screening_sixth <- read.csv("screening_sixth.csv")
+
+```
