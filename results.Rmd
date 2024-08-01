@@ -32,17 +32,17 @@ library(terra) #raster package
 ## Import data
 ```{r load data, message = FALSE}
 #import metadata from read articles
-metadata_record <- read.csv("metadata_R_input.csv")
+metadata_record <- read.csv("data_working/metadata_R_input.csv")
 
 #import WWF Biomes shapefile
-biomes_shp <- st_read("external_input/wwf_terr_ecos/wwf_terr_ecos.shp")
+biomes_shp <- st_read("data_external/wwf_terr_ecos/wwf_terr_ecos.shp")
 
 #import world clim 2.1 solar radiation for Jan-Dec 1970-2000
-srad_files <- list.files("external_input/wc2.1_30s_srad", pattern = "\\.tif", full.names = TRUE)
+srad_files <- list.files("data_external/wc2.1_30s_srad", pattern = "\\.tif", full.names = TRUE)
 srad_raster <- rast(srad_files)
 
 #import world clim 2.1 bio variables for Jan-Dec 1970-2000
-bioclim_files <-list.files("external_input/wc2.1_30s_bio", pattern = "\\.tif", full.names = TRUE)
+bioclim_files <-list.files("data_external/wc2.1_30s_bio", pattern = "\\.tif", full.names = TRUE)
 bioclim_raster <- rast(bioclim_files)
 
 ```
@@ -138,12 +138,18 @@ field_rs_data$eco_name <- biome_value$ECO_NAME
 
 ## Seperate field & remote sensing studies
 ```{r split field & rs data, message = FALSE}
+#split field papers
+field_data <- field_rs_data %>%
+  filter(str_detect(study_method, "field"))
 
+#split remote sensing papers
+rs_data <- field_rs_data %>%
+  filter(str_detect(study_method, "remote"))
 
 ```
 
 
-## Map of research
+## Maps of research
 ```{r research map}
 # intensity map of countries of all studies
 countries_split <- clean_data %>%
@@ -181,16 +187,109 @@ ggplot() +
        x = "Longitude",
        y = "Latitude")
 
+#dot map of field studies
+ggplot() +
+  borders("world", colour = "gray85", fill = "gray80") +  # Plot the world map
+  geom_point(data = field_data, aes(x = long, y = lat), color = "red", size = 1) +  # Add points
+  theme_minimal() +
+  labs(title = "Distribution of field research",
+       x = "Longitude",
+       y = "Latitude")
+
+#dot map of RS studies
+ggplot() +
+  borders("world", colour = "gray85", fill = "gray80") +  # Plot the world map
+  geom_point(data = rs_data, aes(x = long, y = lat), color = "red", size = 1) +  # Add points
+  theme_minimal() +
+  labs(title = "Distribution of remote sensing research",
+       x = "Longitude",
+       y = "Latitude")
+
 ```
 
-## Quick Stats
-```{r quick stats}
+## Papers over time
+```{r papers over time}
+# ALL PAPERS
 
-table(sorted_data$bio.exp)
-table(sorted_data$structural)
-table(sorted_data$country)
-table(sorted_data$slip_driver)
-table(sorted_data$exotic)
+years_papers <- clean_data %>%
+  count(year, name = "count")
+
+ggplot(years_papers, aes(x = year, y = count)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "All Papers Published per Year",
+       x = "Year",
+       y = "Number of Studies Published") +
+  theme_minimal()
+
+
+# REMOTE SENSING PAPERS
+
+years_rs <- rs_data %>%
+  count(year, name = "count")
+
+ggplot(years_rs, aes(x = year, y = count)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Remote Sensing Papers Published per Year",
+       x = "Year",
+       y = "Number of Studies Published") +
+  theme_minimal()
+
+# FIELD PAPERS
+
+years_field <- field_data %>%
+  count(year, name = "count")
+
+ggplot(years_field, aes(x = year, y = count)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Field Papers Published per Year",
+       x = "Year",
+       y = "Number of Studies Published") +
+  theme_minimal()
+
+```
+
+## Quick Field Stats
+```{r quick field stats}
+
+table(field_data$bio.exp)
+table(field_data$structural)
+table(field_data$slip_driver)
+
+# NUMBER OF SLIPS
+table(field_data$slip_number)
+field_data <- field_data %>%
+  mutate(slip_number = str_replace(slip_number, "MISSING", "NA"))
+
+field_data$slip_number <- as.numeric(field_data$slip_number)
+
+summary(field_data$slip_number)
+
+ggplot(field_data, aes(x = slip_number)) +
+  geom_histogram(fill = "blue", color = "black", na.rm = TRUE) +
+  labs(title = "Landslides Surveyed in Field Studies",
+       x = "# Landslides Surveyed",
+       y = "Studies") +
+  theme_minimal()
+
+# EXOTIC
+field_data <- field_data %>%
+  mutate(exotic = ifelse(grepl("TRUE", exotic, ignore.case = TRUE), "TRUE", FALSE))
+table(field_data$exotic)
+
+# TIME
+table(field_data$time)
+time_split <- field_data %>%
+  mutate(time = str_replace(time, "TRUE - ", "")) %>%
+  separate_rows(time, sep = ", ")
+table(time_split$time)
+
+
+#SEEDS
+field_seeds <- table(field_data$seeds)
+print(field_seeds)
 
 ```
 
