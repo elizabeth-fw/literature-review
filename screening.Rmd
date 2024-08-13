@@ -31,7 +31,7 @@ library(wordcloud)
 ```{r import data}
 # use relative file path to read ris files & create one data frame
 
-ris_files <- list.files(path = "raw_data", pattern = ".ris", full.names = TRUE)
+ris_files <- list.files(path = "data_raw", pattern = ".ris", full.names = TRUE)
 
 data_raw <- read_refs(ris_files, return_df = TRUE, verbose = TRUE)
 

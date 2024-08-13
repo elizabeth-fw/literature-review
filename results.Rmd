@@ -27,6 +27,7 @@ library(stm)
 library(wordcloud)
 library(sf) #vector package
 library(terra) #raster package
+library(ggbreak)
 ```
 
 ## Import data
@@ -57,6 +58,27 @@ if (any(invalid_geometries)) {
 
 # Fix invalid geometries
 wwf_biomes <- st_make_valid(biomes_shp)
+
+#Include biome names
+biome_names <- c(
+  "1" = "Tropical and subtropical moist broadleaf forests",
+  "2" = "Tropical and subtropical dry broadleaf forests",
+  "3" = "Tropical and subtropical coniferous forests",
+  "4" = "Temperate broadleaf and mixed forests",
+  "5" = "Temperate Coniferous Forest",
+  "6" = "Boreal forests / Taiga",
+  "7" = "Tropical and subtropical grasslands, savannas and shrublands",
+  "8" = "Temperate grasslands, savannas and shrublands",
+  "9" = "Flooded grasslands and savannas",
+  "10" = "Montane grasslands and shrublands",
+  "11" = "Tundra",
+  "12" = "Mediterranean Forests, woodlands and scrubs",
+  "13" = "Deserts and xeric shrublands",
+  "14" = "Mangroves"
+)
+
+wwf_biomes <- wwf_biomes %>% 
+  mutate(BIOME_NAME = biome_names[as.character(BIOME)])
 
 ```
 
@@ -132,9 +154,25 @@ field_rs_data$srad_avg <- srad_value$srad_avg
 biome_value <- st_join(coord_sf, wwf_biomes, join = st_intersects)
 
 field_rs_data$biome <- biome_value$BIOME
+field_rs_data$biome_name <-biome_value$BIOME_NAME
 field_rs_data$eco_name <- biome_value$ECO_NAME
 
 ```
+
+
+```{r spatsample random 1000 bioclim points, message = FALSE}
+
+# Generate random control points and convert to df
+clim_ctrl_points <- spatSample(bioclim_raster, size = 1000, na.rm = TRUE, as.points = TRUE)
+clim_ctrl_data <- data.frame(crds(clim_ctrl_points))
+
+# Extract worldclim 2.1 data from coordinates
+clim_ctrl_value <- extract(bioclim_raster, clim_ctrl_points, method = "simple")
+
+clim_ctrl_data <- cbind(clim_ctrl_data, clim_ctrl_value[,-1]) #exclude 1 - ID column
+
+```
+
 
 ## Seperate field & remote sensing studies
 ```{r split field & rs data, message = FALSE}
@@ -181,29 +219,25 @@ ggplot(map_data, aes(x = long, y = lat, group = group)) +
 # dot map of all field & RS studies
 ggplot() +
   borders("world", colour = "gray85", fill = "gray80") +  # Plot the world map
-  geom_point(data = field_rs_data, aes(x = long, y = lat), color = "red", size = 1) +  # Add points
+  geom_point(data = field_rs_data, aes(x = long, y = lat, colour = study_method), size = 1) +  # Add points
+  scale_color_manual(values = c("field" = "red", "remote sensing" = "blue")) + #Set colors
   theme_minimal() +
-  labs(title = "Distribution of field & rs research",
+  labs(title = "Distribution of Field & Remote Sensing Research",
        x = "Longitude",
-       y = "Latitude")
+       y = "Latitude",
+       colour = "Primary Research Method")
 
-#dot map of field studies
+# Focus on SE Asia
 ggplot() +
   borders("world", colour = "gray85", fill = "gray80") +  # Plot the world map
-  geom_point(data = field_data, aes(x = long, y = lat), color = "red", size = 1) +  # Add points
+  geom_point(data = field_rs_data, aes(x = long, y = lat, colour = study_method), size = 1.5) +  # Add points
+  scale_color_manual(values = c("field" = "red", "remote sensing" = "blue")) + #Set colors
+  coord_cartesian(xlim = c(70, 150), ylim = c(10, 50)) +  # Zoom in on the specified region
   theme_minimal() +
-  labs(title = "Distribution of field research",
+  labs(title = "Distribution of Field & Remote Sensing Research (SE Asia)",
        x = "Longitude",
-       y = "Latitude")
-
-#dot map of RS studies
-ggplot() +
-  borders("world", colour = "gray85", fill = "gray80") +  # Plot the world map
-  geom_point(data = rs_data, aes(x = long, y = lat), color = "red", size = 1) +  # Add points
-  theme_minimal() +
-  labs(title = "Distribution of remote sensing research",
-       x = "Longitude",
-       y = "Latitude")
+       y = "Latitude",
+       color = "Primary Research Method")
 
 ```
 
@@ -211,43 +245,89 @@ ggplot() +
 ```{r papers over time}
 # ALL PAPERS
 
-years_papers <- clean_data %>%
-  count(year, name = "count")
+years_all <- data.frame(year = seq(1964, 2024))
 
+years_papers <- clean_data %>%
+  count(year, name = "count") %>%
+  right_join(years_all, by = "year") %>%
+  replace_na(list(count = 0)) %>%
+  filter(year <= 2023)
+  
 ggplot(years_papers, aes(x = year, y = count)) +
   geom_line() +
   geom_point() +
+  geom_smooth(method = "loess", se = FALSE) +
+  scale_x_continuous(breaks = seq(1970, max(years_rs_field$year), by = 10)) +
   labs(title = "All Papers Published per Year",
        x = "Year",
        y = "Number of Studies Published") +
   theme_minimal()
 
 
-# REMOTE SENSING PAPERS
+# REMOTE SENSING & FIELD PAPERS
 
 years_rs <- rs_data %>%
-  count(year, name = "count")
-
-ggplot(years_rs, aes(x = year, y = count)) +
-  geom_line() +
-  geom_point() +
-  labs(title = "Remote Sensing Papers Published per Year",
-       x = "Year",
-       y = "Number of Studies Published") +
-  theme_minimal()
-
-# FIELD PAPERS
+  count(year, name = "count") %>%
+  right_join(years_all, by = "year") %>%
+  replace_na(list(count = 0)) %>%
+  mutate(type = "Remote Sensing")
 
 years_field <- field_data %>%
-  count(year, name = "count")
+  count(year, name = "count") %>%
+  right_join(years_all, by = "year") %>%
+  replace_na(list(count = 0)) %>%
+  mutate(type = "Field") 
 
-ggplot(years_field, aes(x = year, y = count)) +
+years_rs_field <- bind_rows(years_rs, years_field) %>%
+  filter(year <= 2023)
+
+ggplot(years_rs_field, aes(x = year, y = count, color = type)) +
   geom_line() +
   geom_point() +
-  labs(title = "Field Papers Published per Year",
+  geom_smooth(method = "loess", se = FALSE) +
+  scale_x_continuous(breaks = seq(1970, max(years_rs_field$year), by = 10)) +
+  labs(title = "Remote Sensing & Field Papers Published per Year",
        x = "Year",
-       y = "Number of Studies Published") +
+       y = "Number of Studies Published", 
+       color = "Primary Research Method") +
   theme_minimal()
+
+```
+
+## Bioclim Results
+````{r biome results}
+#List biomes
+table(field_rs_data$biome_name)
+```
+
+```{r clim results}
+#Combine control and study data
+clim_ctrl_data$group <- "control"
+field_rs_data$group <- field_rs_data$study_method
+field_rs_data$group <- gsub(" & forecast model", "", field_rs_data$group)
+
+
+clim_combined_pts <- rbind(
+  field_rs_data[,c("wc2.1_30s_bio_1", "wc2.1_30s_bio_12", "group")],
+  clim_ctrl_data[, c("wc2.1_30s_bio_1", "wc2.1_30s_bio_12", "group")]
+)
+
+#Generate climograph(temp v precip) scatterplot of study points and control points
+
+ggplot(clim_combined_pts, aes(x = wc2.1_30s_bio_1, y = wc2.1_30s_bio_12, color = group)) +
+  geom_point(data = subset(clim_combined_pts, group == "control"), color = "grey", size = 1, alpha = 0.5) +
+  geom_point(data = subset(clim_combined_pts, group != "control"), size = 2) +
+  labs(title = "Annual Temperature vs Precipitation",
+       x = "Average Annual Temperature (°C)",
+       y = "Average Annual Precipitation (mm)",
+       caption = "Each dot represents a study or a control point (grey)") +
+  scale_color_manual(values = c("field" = "red", "remote sensing" = "blue", "remote sensing & field" = "purple", "control" = "grey")) +
+  theme(legend.position = "right")
+
+# plot annual temperature vs average rainfall for my papers
+# have field and remote sensing in two different colours
+# compare that against 1000+ random points from the globe as grey points
+#climograph spatSample in TERRA
 
 ```
 
@@ -293,5 +373,73 @@ print(field_seeds)
 
 ```
 
+
+## Remote Sensing Results
+```{r rs spatial & temporal plot}
+#Clean study extent (km2)
+rs_data$study_scale <- suppressWarnings(as.numeric(rs_data$study_scale))
+
+#Clean temporal scale (year range of imagery)
+rs_data$year_start <- suppressWarnings(as.numeric(rs_data$year_start))
+rs_data$year_end <- suppressWarnings(as.numeric(rs_data$year_end))
+
+rs_data <- rs_data %>%
+  mutate(year_range = year_end - year_start)
+
+#Plot spatial v temporal scale
+
+ggplot(rs_data, aes(x = study_scale, y = year_range)) +
+  geom_point(size = 2) +
+  labs(title = "Temporal & Spatial Scale of Remote Sensing Research",
+       x = "Study extent (km2)",
+       y = "Temporal scale (year range)") +
+  theme_minimal() +
+  #scale_x_break(c(50000, 100000)) +
+  scale_x_continuous(trans='sqrt') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis text labels
+
+#HEXBIN plot or log transform the x axis
+# the spatial and temporal domains of modern ecology reference
+
+```
+
+````{r rs general stats}
+#Imagery
+
+#table(rs_data$imagery)
+
+imagery_names <- c("landsat", "spot", "modis", "sentinel", "worldview", "aerial",
+                   "rapideye", "planet", "photo", "quickbird", "lidar", "proba", 
+                   "formosat", "irs-liss-ii", "hj-1")
+
+
+imagery_counts <- map_dbl(imagery_names, function(name) {
+  sum(str_detect(rs_data$imagery, fixed(name, ignore_case = TRUE)))
+})
+
+imagery_summary <- setNames(imagery_counts, imagery_names)
+
+print(imagery_summary)
+
+# Time range
+
+
+summary(rs_data$year_range)
+
+
+
+#Quantified Results
+
+
+#Property Interactions
+
+
+#Models
+
+
+#Ground Truthing
+
+
+```
 
 
