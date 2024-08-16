@@ -1,0 +1,219 @@
+---
+title: "results_2_rs"
+author: "Elizabeth Williams"
+date: "2024-08-15"
+output: html_document
+---
+
+## Load Packages
+
+```{r load packages, message = FALSE}
+library(revtools)
+library(synthesisr)
+library(dplyr)
+library(janitor)
+library(tidyverse)
+library(stringr)
+library(tidytext)
+library(widyr)
+library(ggraph)
+library(ggplot2)
+library(maps)
+library(igraph)
+library(base)
+library(stm)
+library(wordcloud)
+library(sf) #vector package
+library(terra) #raster package
+library(ggbreak)
+```
+
+## Add Functions
+```{r add functions}
+convert_to_TF <- function(x) {
+  return(grepl("TRUE", x, ignore.case = TRUE))
+}
+
+check_terms <- function(input_column, key_terms) {
+  sapply(key_terms, function(term) grepl(term, input_column, ignore.case = TRUE)) %>% any()
+}
+
+```
+
+## Import data
+```{r load data, message = FALSE}
+#import remote sensing papers
+rs_data <- read.csv("data_working/rs_data.csv")
+
+```
+
+
+## Spatial & Temporal Extent
+```{r spatial & temporal plot}
+#Clean study extent (km2)
+rs_data$study_scale <- suppressWarnings(as.numeric(rs_data$study_scale))
+
+#Clean temporal scale (year range of imagery)
+rs_data$year_start <- suppressWarnings(as.numeric(rs_data$year_start))
+rs_data$year_end <- suppressWarnings(as.numeric(rs_data$year_end))
+
+rs_data <- rs_data %>%
+  mutate(year_range = year_end - year_start)
+
+#Plot spatial v temporal scale
+
+ggplot(rs_data, aes(x = study_scale, y = year_range)) +
+  geom_point(size = 2) +
+  labs(title = "Temporal & Spatial Scale of Remote Sensing Research",
+       x = "Study extent (km2)",
+       y = "Temporal scale (year range)") +
+  theme_minimal() +
+  #scale_x_break(c(50000, 100000)) +
+  scale_x_continuous(trans='sqrt') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis text labels
+
+#HEXBIN plot or log transform the x axis
+# the spatial and temporal domains of modern ecology reference
+
+```
+
+## Imagery
+
+make a spatial resolution barpolt after the first draft is written!
+
+```{r imagery}
+
+table(rs_data$imagery)
+
+imagery_names <- c("landsat", "spot", "modis", "sentinel", "worldview", "aerial",
+                   "rapideye", "planet", "photo", "quickbird", "lidar", "proba", 
+                   "formosat", "irs-liss-ii", "hj-1")
+
+
+imagery_counts <- map_dbl(imagery_names, function(name) {
+  sum(str_detect(rs_data$imagery, fixed(name, ignore_case = TRUE)))
+})
+
+summary_imagery <- setNames(imagery_counts, imagery_names)
+
+print(summary_imagery)
+
+```
+
+
+#Measurements & Prop Interactions
+
+```{r cleaning rs measurements & property interactions}
+
+#create temporary list of columns to be made to TRUE/FALSE
+tmp_rs_convert <- c("veg_cover", "veg_ecotype", "veg_other", "int_veg_prop", "rs_model")
+
+# make listed columns T/F
+for (col in tmp_rs_convert) {
+  rs_data[[paste0(col, "_TF")]] <- convert_to_TF(rs_data[[col]])
+}
+
+# group property interactions
+groups_int_prop <- list(
+  prop_topo = c("slope", "aspect", "elevation", "curvature", "convergence index", 
+                 "topographic wetness index", "TWI", "roughness"),
+  prop_litho = c("lithology", "parent material", "substrate", "erodibility"),
+  prop_weather = c("exposure", "solar", "temp", "rain", "precip", "wind", "snow"),
+  prop_age = c("age"),
+  prop_size = c("size", "perimeter", "area"),
+  prop_veg = c("veg", "land use", "tree"),
+  prop_disturb_prox = c("distance", "proximity", "association"),
+  prop_zone = c("zone"),
+  prop_nutrients = c("soil OC", "soil ph")
+)
+
+# sort property interaction results into the set groups
+for (group in names(groups_int_prop)) {
+  rs_data[[group]] <- sapply(rs_data$int_veg_prop, function(x) check_terms(x, groups_int_prop[[group]]))
+}
+```
+
+
+Terms included in disturbance proximity properties: c("distance to infrastructure", "distance from edge", "distance to fault", 
+                            "distance to road", "road association", "road proximity", 
+                            "distance to active fault", "urban residential proximity", 
+                            "proximity to stream", "distance to river", "riverbank proximity")
+
+## Cleaning Algorithms for Recovery Detection
+
+split this into supervised & unsupervised after the first draft
+this will require rereading the papers for if they use labelled data
+
+```{r cleaning recovery algorithms}
+# Algorithms for Recovery Detection
+
+groups_algorithms <- list(
+  deep_learning = c("neural network", "CNN", "MLP", "propagation"),
+  statistical = c("tree", "random", "extreme", "neighbours", "svm", "linear", "regression", "bayes", "sarima", "casa", "pixel", "cube")
+)
+
+rs_data$rs_model <- ifelse(grepl("FALSE", rs_data$rs_model), "FALSE", rs_data$rs_model)
+
+for (group in names(groups_algorithms)) {
+  rs_data[[group]] <- sapply(rs_data$rs_model, function(x) check_terms(x, groups_algorithms[[group]]))
+}
+
+```
+
+#Cleaning ground truthing
+
+```{r ground truthing}
+# split ground truth into 3 categories
+
+rs_data <- rs_data %>%
+  mutate(ground_truth = case_when(
+    grepl("partial", ground_truth, ignore.case = TRUE) ~ "partial",
+    grepl("full", ground_truth, ignore.case = TRUE) ~ "full",
+    TRUE ~ "FALSE"
+  ))
+
+
+```
+
+
+
+# Printing RS results
+```{r print results summary}
+#Imagery
+print(summary_imagery)
+
+
+# Group TF columns
+summary_rs_columns <- c("veg_cover_TF", "veg_ecotype_TF", "veg_other_TF", "int_veg_prop_TF", 
+                     "rs_model_TF", "prop_topo", "prop_litho", "prop_weather", "prop_age", 
+                     "prop_size", "prop_veg", "prop_disturb_prox", "prop_zone", 
+                     "prop_nutrients", "deep_learning", "statistical")
+
+# Extract relevant columns
+rs_to_summarize <- rs_data[summary_rs_columns]
+
+# Count TRUE and FALSE values across all specified columns
+true_counts <- colSums(rs_to_summarize == "TRUE", na.rm = TRUE)
+false_counts <- colSums(rs_to_summarize == "FALSE", na.rm = TRUE)
+
+# Create a summary data frame
+summary_rs_TF <- data.frame(
+  True = true_counts,
+  False = false_counts,
+  stringsAsFactors = FALSE
+)
+
+# Display the final summary table
+print(summary_rs_TF)
+
+
+# Summarizing ground_truth
+summary_ground_truth <- rs_data %>%
+  group_by(ground_truth) %>%
+  summarize(count = n())
+
+print(summary_ground_truth)
+
+```
+
+

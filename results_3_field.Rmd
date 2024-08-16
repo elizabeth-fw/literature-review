@@ -1,0 +1,183 @@
+---
+title: "results_3_field"
+author: "Elizabeth Williams"
+date: "2024-08-15"
+output: html_document
+---
+
+## Load Packages
+
+```{r load packages, message = FALSE}
+library(revtools)
+library(synthesisr)
+library(dplyr)
+library(janitor)
+library(tidyverse)
+library(stringr)
+library(tidytext)
+library(widyr)
+library(ggraph)
+library(ggplot2)
+library(maps)
+library(igraph)
+library(base)
+library(stm)
+library(wordcloud)
+library(sf) #vector package
+library(terra) #raster package
+library(ggbreak)
+```
+
+## Add Functions
+```{r add functions}
+convert_to_TF <- function(x) {
+  return(grepl("TRUE", x, ignore.case = TRUE))
+}
+
+check_terms <- function(input_column, key_terms) {
+  sapply(key_terms, function(term) grepl(term, input_column, ignore.case = TRUE)) %>% any()
+}
+
+```
+
+## Import data
+```{r load data, message = FALSE}
+#import remote sensing papers
+field_data <- read.csv("data_working/field_data.csv")
+
+```
+
+
+## Quick Field Stats
+```{r quick field stats}
+
+table(field_data$bio.exp)
+table(field_data$structural)
+table(field_data$slip_driver)
+
+```
+
+## Number of slips surveyed
+```{r number of slips surveyed}
+
+# NUMBER OF SLIPS
+table(field_data$slip_number)
+field_data <- field_data %>%
+  mutate(slip_number = str_replace(slip_number, "MISSING", "NA"))
+
+field_data$slip_number <- as.numeric(field_data$slip_number)
+
+summary(field_data$slip_number)
+
+#histogram
+ggplot(field_data, aes(x = slip_number)) +
+  geom_histogram(binwidth = 1, fill = "blue", color = "black", na.rm = TRUE) +
+  labs(title = "Landslides Surveyed in Field Studies",
+       x = "# Landslides Surveyed",
+       y = "Studies") +
+  theme_minimal()
+
+```
+
+
+## General T/F results
+```{r clean T/F results}
+
+#create temporary list of columns to be made to TRUE/FALSE
+tmp_field_convert <- c("veg_trait", "veg_spp", "int_plant_plant", "int_plant_other", "int_plant_prop", "time",
+                       "compare_veg", "seeds", "exotic")
+
+# make listed columns T/F
+for (col in tmp_field_convert) {
+  field_data[[paste0(col, "_TF")]] <- convert_to_TF(field_data[[col]])
+}
+
+```
+
+```{r print T/F field results}
+# Group TF columns
+summary_field_columns <- c("veg_trait_TF", "trait_size", "trait_root", "trait_leaf", 
+                     "trait_other", "veg_spp_TF", "int_plant_plant_TF", "int_plant_other_TF", "int_plant_prop_TF", 
+                     "time_TF", "compare_veg_TF", "seeds_TF", "exotic_TF")
+
+# Extract relevant columns
+field_to_summarize <- field_data[summary_field_columns]
+
+# Count TRUE and FALSE values across all specified columns
+true__field_counts <- colSums(field_to_summarize == "TRUE", na.rm = TRUE)
+false_field_counts <- colSums(field_to_summarize == "FALSE", na.rm = TRUE)
+
+# Create a summary data frame
+summary_field_TF <- data.frame(
+  True = true__field_counts,
+  False = false_field_counts,
+  stringsAsFactors = FALSE
+)
+
+# Display the final summary table
+print(summary_field_TF)
+
+```
+## Specific T/F results
+
+``` {r interactions with landslide properties}
+field_int_prop <- field_data %>%
+  mutate(int_plant_prop = str_replace(int_plant_prop, "TRUE - ", "")) %>%
+  separate_rows(int_plant_prop, sep = ", ")
+
+table(field_int_prop$int_plant_prop)
+
+```
+
+Need to determine how to split these given the results above - to start based on rs: 
+
+groups_int_prop <- list(
+  prop_topo = c("slope", "aspect", "elevation", "curvature", "convergence index", 
+                 "topographic wetness index", "TWI", "roughness"),
+  prop_litho = c("lithology", "parent material", "substrate", "erodibility", "clay", "sand"),
+  prop_weather = c("exposure", "solar", "temp", "rain", "precip", "wind", "snow"),
+  prop_age = c("age"),
+  prop_size = c("size", "perimeter", "area", "length", "width"),
+  prop_veg = c("veg", "land use", "tree", "cover"),
+  prop_disturb_prox = c("distance", "proximity", "association"),
+  prop_zone = c("zone"),
+  prop_nutrients = c("soil OC", "soil OM", " soil N", "soil P", soil ph")
+)
+
+``` {r time & seeds results}
+# Time
+field_data <- field_data %>%
+  mutate(time = str_replace(time, "TRUE - ", ""))
+table(field_data$time)
+
+
+#Seeds
+field_data <- field_data %>%
+  mutate(seeds = str_replace(seeds, "TRUE - ", "")) 
+
+table(field_data$seeds)
+
+```
+
+## Plot & plotless
+
+``` {r plot & plotless}
+#primary survey method
+table(field_data$plot_plotless)
+
+#plot size summary
+field_data$plot_size <- suppressWarnings(as.numeric(field_data$plot_size))
+summary(field_data$plot_size)
+
+#plot size histogram
+ggplot(field_data, aes(x = plot_size)) +
+  geom_histogram(binwidth = 1, fill = "blue", color = "black", na.rm = TRUE) +
+  labs(title = "Plot size of Field Surveys",
+       x = "Plot size (m2)",
+       y = "Studies") +
+  theme_minimal()
+
+#plotless methods
+table(field_data$plotless_method)
+
+```

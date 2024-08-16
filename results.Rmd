@@ -30,6 +30,19 @@ library(terra) #raster package
 library(ggbreak)
 ```
 
+## Add Functions
+```{r add functions}
+convert_to_TF <- function(x) {
+  return(grepl("TRUE", x, ignore.case = TRUE))
+}
+
+check_terms <- function(input_column, key_terms) {
+  sapply(key_terms, function(term) grepl(term, input_column, ignore.case = TRUE)) %>% any()
+}
+
+```
+
+
 ## Import data
 ```{r load data, message = FALSE}
 #import metadata from read articles
@@ -119,16 +132,44 @@ clean_data <- select(sorted_data, -c(database, document_type, language, volume, 
 
 ## Extra sorting
 ```{r extra sorting, message = FALSE}
-#isolate modelling papers
-predict_model <- clean_data %>%
+#isolate field, remote sensing, & forecast modelling papers
+field_rs_frcst_data <- clean_data %>%
+  filter(str_detect(study_method, "remote") | str_detect(study_method, "field") | str_detect(study_method, "model"))
+
+#split field & remote sensing papers
+field_rs_data <- field_rs_frcst_data %>%
+  filter(str_detect(study_method, "remote") | str_detect(study_method, "field"))
+
+#split forecast modelling papers
+frcst_data <- field_rs_frcst_data %>%
   filter(str_detect(study_method, "model") | str_detect(forecast_model, "TRUE"))
 
-#isolate field & remote sensing papers
-field_rs_data <- clean_data %>%
-  filter(str_detect(study_method, "remote") | str_detect(study_method, "field"))
+#split field papers
+field_data <- field_rs_frcst_data %>%
+  filter(str_detect(study_method, "field"))
+
+field_data <- select(field_data, -c(imagery, spectrum, indices, implementation, year_start, year_end, veg_cover, veg_ecotype, veg_other, int_veg_prop, rs_model, ground_truth))
+
+#split remote sensing papers
+rs_data <- field_rs_frcst_data %>%
+  filter(str_detect(study_method, "remote"))
+
+rs_data <- select(rs_data, -c(veg_trait, trait_size, trait_root, trait_leaf, trait_other, veg_spp, int_plant_plant, int_plant_other, int_plant_prop, time, compare_veg, seeds, exotic, plot_plotless, plot_size, plotless_method, forecast_model))
 
 ```
 
+## Export for other results processing
+```{r exporting split dataframes, message = FALSE}
+#split forecast modelling papers
+write.csv(frcst_data, "data_working/frcst_data.csv", row.names = FALSE)
+
+#split field papers
+write.csv(field_data, "data_working/field_data.csv", row.names = FALSE)
+
+#split remote sensing papers
+write.csv(rs_data, "data_working/rs_data.csv", row.names = FALSE)
+
+```
 
 ## add data from coordinates
 ```{r add data from coordinates, message = FALSE}
@@ -170,19 +211,6 @@ clim_ctrl_data <- data.frame(crds(clim_ctrl_points))
 clim_ctrl_value <- extract(bioclim_raster, clim_ctrl_points, method = "simple")
 
 clim_ctrl_data <- cbind(clim_ctrl_data, clim_ctrl_value[,-1]) #exclude 1 - ID column
-
-```
-
-
-## Seperate field & remote sensing studies
-```{r split field & rs data, message = FALSE}
-#split field papers
-field_data <- field_rs_data %>%
-  filter(str_detect(study_method, "field"))
-
-#split remote sensing papers
-rs_data <- field_rs_data %>%
-  filter(str_detect(study_method, "remote"))
 
 ```
 
@@ -324,122 +352,4 @@ ggplot(clim_combined_pts, aes(x = wc2.1_30s_bio_1, y = wc2.1_30s_bio_12, color =
   scale_color_manual(values = c("field" = "red", "remote sensing" = "blue", "remote sensing & field" = "purple", "control" = "grey")) +
   theme(legend.position = "right")
 
-# plot annual temperature vs average rainfall for my papers
-# have field and remote sensing in two different colours
-# compare that against 1000+ random points from the globe as grey points
-#climograph spatSample in TERRA
-
 ```
-
-## Quick Field Stats
-```{r quick field stats}
-
-table(field_data$bio.exp)
-table(field_data$structural)
-table(field_data$slip_driver)
-
-# NUMBER OF SLIPS
-table(field_data$slip_number)
-field_data <- field_data %>%
-  mutate(slip_number = str_replace(slip_number, "MISSING", "NA"))
-
-field_data$slip_number <- as.numeric(field_data$slip_number)
-
-summary(field_data$slip_number)
-
-ggplot(field_data, aes(x = slip_number)) +
-  geom_histogram(fill = "blue", color = "black", na.rm = TRUE) +
-  labs(title = "Landslides Surveyed in Field Studies",
-       x = "# Landslides Surveyed",
-       y = "Studies") +
-  theme_minimal()
-
-# EXOTIC
-field_data <- field_data %>%
-  mutate(exotic = ifelse(grepl("TRUE", exotic, ignore.case = TRUE), "TRUE", FALSE))
-table(field_data$exotic)
-
-# TIME
-table(field_data$time)
-time_split <- field_data %>%
-  mutate(time = str_replace(time, "TRUE - ", "")) %>%
-  separate_rows(time, sep = ", ")
-table(time_split$time)
-
-
-#SEEDS
-field_seeds <- table(field_data$seeds)
-print(field_seeds)
-
-```
-
-
-## Remote Sensing Results
-```{r rs spatial & temporal plot}
-#Clean study extent (km2)
-rs_data$study_scale <- suppressWarnings(as.numeric(rs_data$study_scale))
-
-#Clean temporal scale (year range of imagery)
-rs_data$year_start <- suppressWarnings(as.numeric(rs_data$year_start))
-rs_data$year_end <- suppressWarnings(as.numeric(rs_data$year_end))
-
-rs_data <- rs_data %>%
-  mutate(year_range = year_end - year_start)
-
-#Plot spatial v temporal scale
-
-ggplot(rs_data, aes(x = study_scale, y = year_range)) +
-  geom_point(size = 2) +
-  labs(title = "Temporal & Spatial Scale of Remote Sensing Research",
-       x = "Study extent (km2)",
-       y = "Temporal scale (year range)") +
-  theme_minimal() +
-  #scale_x_break(c(50000, 100000)) +
-  scale_x_continuous(trans='sqrt') +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis text labels
-
-#HEXBIN plot or log transform the x axis
-# the spatial and temporal domains of modern ecology reference
-
-```
-
-````{r rs general stats}
-#Imagery
-
-#table(rs_data$imagery)
-
-imagery_names <- c("landsat", "spot", "modis", "sentinel", "worldview", "aerial",
-                   "rapideye", "planet", "photo", "quickbird", "lidar", "proba", 
-                   "formosat", "irs-liss-ii", "hj-1")
-
-
-imagery_counts <- map_dbl(imagery_names, function(name) {
-  sum(str_detect(rs_data$imagery, fixed(name, ignore_case = TRUE)))
-})
-
-imagery_summary <- setNames(imagery_counts, imagery_names)
-
-print(imagery_summary)
-
-# Time range
-
-
-summary(rs_data$year_range)
-
-
-
-#Quantified Results
-
-
-#Property Interactions
-
-
-#Models
-
-
-#Ground Truthing
-
-
-```
-
-
