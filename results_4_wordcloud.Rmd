@@ -1,0 +1,19 @@
+---
+title: "results_4_wordcloud"
+author: "Elizabeth Williams"
+date: "2024-08-29"
+output: html_document
+---
+
+```{r wordcloud}
+install.packages("wordcloud")
+install.packages("tm")  # For text mining
+install.packages("RColorBrewer")  # For color palettes
+```
+
+```{r wordcloud}
+#import clean data
+frf_data <- read.csv("data_working/frf_data.csv")
+
+
+```

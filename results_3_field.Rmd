@@ -26,6 +26,7 @@ library(wordcloud)
 library(sf) #vector package
 library(terra) #raster package
 library(ggbreak)
+library(UpSetR)
 ```
 
 ## Add Functions
@@ -34,8 +35,13 @@ convert_to_TF <- function(x) {
   return(grepl("TRUE", x, ignore.case = TRUE))
 }
 
-check_terms <- function(input_column, key_terms) {
-  sapply(key_terms, function(term) grepl(term, input_column, ignore.case = TRUE)) %>% any()
+check_partial_terms <- function(input_column, key_terms) {
+  sapply(input_column, function(x) any(sapply(key_terms, function(term) grepl(term, x, ignore.case = TRUE))))
+}
+
+check_full_terms <- function(input_column, key_terms) {
+  pattern <- paste0("\\b(", paste(key_terms, collapse = "|"), ")\\b")
+  str_detect(input_column, regex(pattern, ignore_case = TRUE))
 }
 
 ```
@@ -67,11 +73,12 @@ field_data <- field_data %>%
 
 field_data$slip_number <- as.numeric(field_data$slip_number)
 
+table(field_data$slip_number)
 summary(field_data$slip_number)
 
 #histogram
 ggplot(field_data, aes(x = slip_number)) +
-  geom_histogram(binwidth = 1, fill = "blue", color = "black", na.rm = TRUE) +
+  geom_histogram(binwidth = 1, fill = "grey", color = "black", na.rm = TRUE) +
   labs(title = "Landslides Surveyed in Field Studies",
        x = "# Landslides Surveyed",
        y = "Studies") +
@@ -94,11 +101,60 @@ for (col in tmp_field_convert) {
 
 ```
 
+``` {r interactions with landslide properties}
+field_int_prop <- field_data %>%
+  mutate(int_plant_prop = str_replace(int_plant_prop, "TRUE - ", "")) %>%
+  separate_rows(int_plant_prop, sep = ", ")
+
+table(field_int_prop$int_plant_prop)
+
+groups_field_prop <- list(
+  prop_topo = c("slope", "aspect", "elevation", "curvature", "hillshade"),
+  prop_weather = c("temperature", "precipitation", "light", "solar radiation"),
+  prop_size = c("slip size", "slip area", "length", "width"),
+  prop_seed_src = c("edge proximity", "snag cover", "native forest proximity", "bird perches", 
+                    "seed source proximity", "isolation", "remnant vegetation"),
+  prop_disturb_prox = c("road proximity", "stream proximity", "gorge proximity"),
+  prop_prior_disturb = c("prior burning", "prior clearing", "prior human disturbance", "disturbance history"),
+  prop_zone = c("zone", "distance from top", "distance from base"),
+  prop_soil_chem = c("nitrogen", "phosphorus", "carbon", "aluminium", "potassium", "calcium", "copper", "iron", 
+                     "magnesium", "manganese", "zinc", "salt", "sodium", "fertilizer", "nutrients", "nitrate", 
+                     "al/ca ratio", "cation exchange capacity", "cation content", "soil fertility", "microbial biomass", 
+                     "dehydrogenase activity", "organic matter", "organic layer depth", "pH", "water quality"),
+  prop_soil_phys = c("soil texture", "coarse fraction", "grain size", "clast size", "clast shape", "soil depth", 
+                     "deposit depth", "bulk density", "soil type", "soil temp", "stone cover", "stone diameter", 
+                     "microsites", "debris cover", "soil toughness", "soil resistance", "bare soil cover", "roughness",
+                     "litter", "soil moisture", "available water content", "water holding capacity", "parent material", 
+                     "pumice cover", "preexisting soil", "bedrock", "scour level"),
+  prop_erosion = c("soil movement", "erosion rate", "landslide activity", "sediment runoff", "rill prevalence")
+)
+
+# sort property interaction results into the set groups
+for (group in names(groups_field_prop)) {
+  field_data[[group]] <- check_full_terms(field_data$int_plant_prop, groups_field_prop[[group]])
+}
+
+```
+```{r upset chart for prop interactions}
+# Select only the columns specified in the groups_field_prop list
+prop_f_matrix <- field_data %>%
+  select(all_of(names(groups_field_prop))) %>%
+  mutate(across(everything(), as.integer))  # TRUE/FALSE to 1/0
+
+# Create UpSet plot
+upset(prop_f_matrix, sets = c("prop_topo","prop_weather", "prop_size", "prop_seed_src", 
+      "prop_disturb_prox", "prop_prior_disturb", "prop_zone", "prop_soil_chem",
+      "prop_soil_phys","prop_erosion"), mb.ratio = c(0.55, 0.45), order.by = "freq")
+```
+
+
 ```{r print T/F field results}
 # Group TF columns
 summary_field_columns <- c("veg_trait_TF", "trait_size", "trait_root", "trait_leaf", 
                      "trait_other", "veg_spp_TF", "int_plant_plant_TF", "int_plant_other_TF", "int_plant_prop_TF", 
-                     "time_TF", "compare_veg_TF", "seeds_TF", "exotic_TF")
+                     "time_TF", "compare_veg_TF", "seeds_TF", "exotic_TF", "prop_topo", "prop_weather", "prop_size", 
+                     "prop_seed_src", "prop_disturb_prox", "prop_prior_disturb", "prop_zone", "prop_soil_chem", 
+                     "prop_soil_phys", "prop_erosion")
 
 # Extract relevant columns
 field_to_summarize <- field_data[summary_field_columns]
@@ -120,31 +176,12 @@ print(summary_field_TF)
 ```
 ## Specific T/F results
 
-``` {r interactions with landslide properties}
-field_int_prop <- field_data %>%
-  mutate(int_plant_prop = str_replace(int_plant_prop, "TRUE - ", "")) %>%
-  separate_rows(int_plant_prop, sep = ", ")
+``` {r comparisons & time & seeds results}
+# Comparisons
+field_data <- field_data %>%
+  mutate(compare_veg = str_replace(compare_veg, "TRUE - ", ""))
+table(field_data$compare_veg)
 
-table(field_int_prop$int_plant_prop)
-
-```
-
-Need to determine how to split these given the results above - to start based on rs: 
-
-groups_int_prop <- list(
-  prop_topo = c("slope", "aspect", "elevation", "curvature", "convergence index", 
-                 "topographic wetness index", "TWI", "roughness"),
-  prop_litho = c("lithology", "parent material", "substrate", "erodibility", "clay", "sand"),
-  prop_weather = c("exposure", "solar", "temp", "rain", "precip", "wind", "snow"),
-  prop_age = c("age"),
-  prop_size = c("size", "perimeter", "area", "length", "width"),
-  prop_veg = c("veg", "land use", "tree", "cover"),
-  prop_disturb_prox = c("distance", "proximity", "association"),
-  prop_zone = c("zone"),
-  prop_nutrients = c("soil OC", "soil OM", " soil N", "soil P", soil ph")
-)
-
-``` {r time & seeds results}
 # Time
 field_data <- field_data %>%
   mutate(time = str_replace(time, "TRUE - ", ""))
@@ -159,6 +196,30 @@ table(field_data$seeds)
 
 ```
 
+``` {r comparisons results}
+groups_field_compare <- list(
+  compare_natural = c("natural", "pre-slip"),
+  compare_exp = c("planted", "rehabilitated", "fertilized", "terraced", "fenced",
+                  "exp", "reinforced", "barrier", "seeded"),
+  compare_other_dist = c("grazed", "logging", "burnt", "flooded", "pyroclastic flow"))
+
+# sort property interaction results into the set groups
+for (group in names(groups_field_compare)) {
+  field_data[[group]] <- check_partial_terms(field_data$compare_veg, groups_field_compare[[group]])
+}
+
+# Select only the columns specified in the groups_field_compare list
+field_compare_matrix <- field_data %>%
+  select(all_of(names(groups_field_compare))) %>%
+  mutate(across(everything(), as.integer))  # TRUE/FALSE to 1/0
+
+# Create UpSet plot
+upset(field_compare_matrix, sets = c("compare_natural","compare_exp", "compare_other_dist"), 
+      mb.ratio = c(0.55, 0.45), order.by = "freq")
+
+```
+
+
 ## Plot & plotless
 
 ``` {r plot & plotless}
@@ -171,13 +232,18 @@ summary(field_data$plot_size)
 
 #plot size histogram
 ggplot(field_data, aes(x = plot_size)) +
-  geom_histogram(binwidth = 1, fill = "blue", color = "black", na.rm = TRUE) +
+  geom_histogram(binwidth = 1, fill = "grey", color = "black", na.rm = TRUE) +
+  scale_x_continuous(trans = 'sqrt', breaks = c(100, 400, 900)) +  # Breaks at squared values
   labs(title = "Plot size of Field Surveys",
        x = "Plot size (m2)",
        y = "Studies") +
   theme_minimal()
 
 #plotless methods
-table(field_data$plotless_method)
+field_plotless_methods <- field_data %>%
+  mutate(plotless_method = str_replace(plotless_method, "TRUE - ", "")) %>%
+  separate_rows(plotless_method, sep = ", ")
+
+table(field_plotless_methods$plotless_method)
 
 ```

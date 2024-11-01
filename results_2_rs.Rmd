@@ -26,6 +26,7 @@ library(wordcloud)
 library(sf) #vector package
 library(terra) #raster package
 library(ggbreak)
+library(UpSetR)
 ```
 
 ## Add Functions
@@ -69,12 +70,14 @@ ggplot(rs_data, aes(x = study_scale, y = year_range)) +
        y = "Temporal scale (year range)") +
   theme_minimal() +
   #scale_x_break(c(50000, 100000)) +
-  scale_x_continuous(trans='sqrt') +
+  scale_x_continuous(trans='sqrt') +  #or log2 or log10
   theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis text labels
 
 #HEXBIN plot or log transform the x axis
 # the spatial and temporal domains of modern ecology reference
 
+summary(rs_data$year_range)
+summary(rs_data$study_scale)
 ```
 
 ## Imagery
@@ -99,7 +102,42 @@ summary_imagery <- setNames(imagery_counts, imagery_names)
 print(summary_imagery)
 
 ```
+```{r}
+# simplify imagery
+groups_rs_imagery <- list(
+  landsat = c("landsat"),
+  spot = c("spot"),
+  modis = c("modis"),
+  sentinel = c("sentinel"),
+  worldview = c("worldview"),
+  aerial = c("aerial"),
+  rapideye = c("rapideye"),
+  planet = c("planet"),
+  photo = c("photo"),
+  quickbird = c("quickbird"),
+  lidar = c("lidar"),
+  proba = c("proba"),
+  formosat = c("formosat"),
+  irs_liss_ii = c("irs-liss-ii"),
+  hj_1 = c("hj-1")
+)
 
+# sort property interaction results into the set groups
+for (group in names(groups_rs_imagery)) {
+  rs_data[[group]] <- sapply(rs_data$imagery, function(x) check_terms(x, groups_rs_imagery[[group]]))
+}
+
+# Select only the columns specified in the groups_field_prop list
+imagery_rs_matrix <- rs_data %>%
+  select(all_of(names(groups_rs_imagery))) %>%
+  mutate(across(everything(), as.integer))  # TRUE/FALSE to 1/0
+
+# Create UpSet plot
+upset(imagery_rs_matrix, sets = c("landsat", "spot", "modis", "sentinel", "worldview", "aerial", "rapideye", 
+      "planet", "photo", "quickbird", "lidar", "proba", "formosat", "irs_liss_ii", "hj_1"),
+      mb.ratio = c(0.55, 0.45), order.by = "freq")
+
+```
 
 #Measurements & Prop Interactions
 
@@ -114,7 +152,7 @@ for (col in tmp_rs_convert) {
 }
 
 # group property interactions
-groups_int_prop <- list(
+groups_rs_prop <- list(
   prop_topo = c("slope", "aspect", "elevation", "curvature", "convergence index", 
                  "topographic wetness index", "TWI", "roughness"),
   prop_litho = c("lithology", "parent material", "substrate", "erodibility"),
@@ -128,8 +166,8 @@ groups_int_prop <- list(
 )
 
 # sort property interaction results into the set groups
-for (group in names(groups_int_prop)) {
-  rs_data[[group]] <- sapply(rs_data$int_veg_prop, function(x) check_terms(x, groups_int_prop[[group]]))
+for (group in names(groups_rs_prop)) {
+  rs_data[[group]] <- sapply(rs_data$int_veg_prop, function(x) check_terms(x, groups_rs_prop[[group]]))
 }
 ```
 
@@ -138,6 +176,18 @@ Terms included in disturbance proximity properties: c("distance to infrastructur
                             "distance to road", "road association", "road proximity", 
                             "distance to active fault", "urban residential proximity", 
                             "proximity to stream", "distance to river", "riverbank proximity")
+
+```{r upset chart for prop interactions}
+# Select only the columns specified in the groups_field_prop list
+prop_rs_matrix <- rs_data %>%
+  select(all_of(names(groups_rs_prop))) %>%
+  mutate(across(everything(), as.integer))  # TRUE/FALSE to 1/0
+
+# Create UpSet plot
+upset(prop_rs_matrix, sets = c("prop_topo", "prop_litho", "prop_weather", "prop_age", "prop_size", 
+      "prop_veg", "prop_disturb_prox", "prop_zone", "prop_nutrients"), mb.ratio = c(0.55, 0.45), order.by = "freq")
+```
+
 
 ## Cleaning Algorithms for Recovery Detection
 
@@ -154,9 +204,14 @@ groups_algorithms <- list(
 
 rs_data$rs_model <- ifelse(grepl("FALSE", rs_data$rs_model), "FALSE", rs_data$rs_model)
 
+table(rs_data$rs_model)
+
 for (group in names(groups_algorithms)) {
   rs_data[[group]] <- sapply(rs_data$rs_model, function(x) check_terms(x, groups_algorithms[[group]]))
 }
+
+rs_model_papers <- rs_data %>%
+  filter(statistical == TRUE | deep_learning == TRUE)
 
 ```
 
