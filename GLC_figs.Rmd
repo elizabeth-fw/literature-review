@@ -1,0 +1,69 @@
+---
+title: "GLC_maps"
+author: "Elizabeth Williams"
+date: "2025-03-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(sf)
+library(terra)
+library(tmap)
+
+```
+
+
+```{r setup, include=FALSE}
+#import COOLR NASA coorperaive landslide repository shp
+susceptibility_map <- rast("data_external/global-landslide-susceptibility-map-2-27-23.tif")
+nasa_landslides <- st_read("data_external/nasa_global_landslide_catalog_point/nasa_global_landslide_catalog_point.shp")
+
+# Set 0 values to NA (ignored in the plot)
+susceptibility_map[susceptibility_map == 0] <- NA
+
+# Define a color palette for values 1-5 (pale yellow to dark red)
+susceptibility_colors <- c("#FFFFCC", "#FFE699", "#FFB366", "#FF704D", "#CC0000")  # Gradient from pale yellow to dark red
+
+```
+
+
+```{r setup, include=FALSE}
+plot(susceptibility_map, main = "Global Landslide Susceptibility")
+
+
+# Create the tmap plot
+tm_shape(susceptibility_map) +
+  tm_raster(
+    col.scale = tm_scale_categorical(
+      values = susceptibility_colors,
+      labels = c("Very Low", "Low", "Moderate", "High", "Very High")
+    )
+  ) 
+```
+
+```{r setup, include=FALSE}
+#Plot of all reported landslides (nasa global landslide catalog)
+ggplot() +
+  borders("world", colour = "gray80", fill = NA) +  # Plot the world map
+  geom_point(data = nasa_landslides, aes(x = longitude, y = latitude), fill = "gray40", alpha = 0.7, size = 1, show.legend = TRUE) +
+  coord_sf(xlim = c(-180, 180), ylim = c(-65, 85), expand = FALSE) +
+  scale_x_continuous(name = "Longitude", breaks = seq(-180, 180, by = 60), labels = function(x) ifelse(x == 0, "0", as.character(x))) +
+  scale_y_continuous(name = "Latitude", breaks = seq(-60, 85, by = 20), labels = function(y) ifelse(y == 0, "0", as.character(y))) +
+  theme_light() +
+  theme(
+    axis.title = element_text(size = 12.5),   # Set axis titles size
+    axis.text = element_text(size = 12.5),    # Adjust size for x-axis text
+    legend.position = "bottom",             # Position legend at the bottom
+    legend.title = element_text(size = 12.5), # Set legend title size
+    legend.text = element_text(size = 12.5),   # Adjust legend text size
+    panel.grid.major = element_blank(),     # Remove major grid lines
+    panel.grid.minor = element_blank()      # Remove minor grid lines
+  ) +
+  labs(color = "Data",
+       size = "Data")
+```
+
+```{r setup, include=FALSE}
+world_sf
+```

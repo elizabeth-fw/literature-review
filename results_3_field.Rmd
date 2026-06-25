@@ -3,33 +3,22 @@ title: "results_3_field"
 author: "Elizabeth Williams"
 date: "2024-08-15"
 output: html_document
+editor_options: 
+  chunk_output_type: console
 ---
 
 ## Load Packages
 
 ```{r load packages, message = FALSE}
-library(revtools)
-library(synthesisr)
-library(dplyr)
-library(janitor)
 library(tidyverse)
-library(stringr)
-library(tidytext)
-library(widyr)
-library(ggraph)
-library(ggplot2)
-library(maps)
-library(igraph)
-library(base)
-library(stm)
-library(wordcloud)
-library(sf) #vector package
-library(terra) #raster package
-library(ggbreak)
 library(UpSetR)
+library(patchwork)
+library(svglite) #for exporting svg 
+
 ```
 
 ## Add Functions
+
 ```{r add functions}
 convert_to_TF <- function(x) {
   return(grepl("TRUE", x, ignore.case = TRUE))
@@ -47,14 +36,15 @@ check_full_terms <- function(input_column, key_terms) {
 ```
 
 ## Import data
+
 ```{r load data, message = FALSE}
 #import remote sensing papers
 field_data <- read.csv("data_working/field_data.csv")
 
 ```
 
-
 ## Quick Field Stats
+
 ```{r quick field stats}
 
 table(field_data$bio.exp)
@@ -64,6 +54,7 @@ table(field_data$slip_driver)
 ```
 
 ## Number of slips surveyed
+
 ```{r number of slips surveyed}
 
 # NUMBER OF SLIPS
@@ -76,18 +67,21 @@ field_data$slip_number <- as.numeric(field_data$slip_number)
 table(field_data$slip_number)
 summary(field_data$slip_number)
 
-#histogram
-ggplot(field_data, aes(x = slip_number)) +
+#histogram of number of landslides surveyed
+fig_slip_num <- ggplot(field_data, aes(x = slip_number)) +
   geom_histogram(binwidth = 1, fill = "grey", color = "black", na.rm = TRUE) +
-  labs(title = "Landslides Surveyed in Field Studies",
-       x = "# Landslides Surveyed",
+  labs(x = "Number of Landslides Surveyed",
        y = "Studies") +
-  theme_minimal()
+  theme_light() +
+  theme(
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 13)
+  )
 
 ```
 
-
 ## General T/F results
+
 ```{r clean T/F results}
 
 #create temporary list of columns to be made to TRUE/FALSE
@@ -101,7 +95,7 @@ for (col in tmp_field_convert) {
 
 ```
 
-``` {r interactions with landslide properties}
+```{r interactions with landslide properties}
 field_int_prop <- field_data %>%
   mutate(int_plant_prop = str_replace(int_plant_prop, "TRUE - ", "")) %>%
   separate_rows(int_plant_prop, sep = ", ")
@@ -126,7 +120,7 @@ groups_field_prop <- list(
                      "microsites", "debris cover", "soil toughness", "soil resistance", "bare soil cover", "roughness",
                      "litter", "soil moisture", "available water content", "water holding capacity", "parent material", 
                      "pumice cover", "preexisting soil", "bedrock", "scour level"),
-  prop_erosion = c("soil movement", "erosion rate", "landslide activity", "sediment runoff", "rill prevalence")
+  prop_erosion = c("soil movement", "erosion rate", "landslide activity", "sediment runoff", "rill prevalence", "rill proximity")
 )
 
 # sort property interaction results into the set groups
@@ -135,18 +129,19 @@ for (group in names(groups_field_prop)) {
 }
 
 ```
+
 ```{r upset chart for prop interactions}
 # Select only the columns specified in the groups_field_prop list
 prop_f_matrix <- field_data %>%
   select(all_of(names(groups_field_prop))) %>%
   mutate(across(everything(), as.integer))  # TRUE/FALSE to 1/0
 
-# Create UpSet plot
-upset(prop_f_matrix, sets = c("prop_topo","prop_weather", "prop_size", "prop_seed_src", 
-      "prop_disturb_prox", "prop_prior_disturb", "prop_zone", "prop_soil_chem",
-      "prop_soil_phys","prop_erosion"), mb.ratio = c(0.55, 0.45), order.by = "freq")
-```
+colnames(prop_f_matrix) = c("Topography", "Weather", "Size", "Seed Source Prox.", "Disturbance Prox.", "Prior Disturbance", "Zone", "Soil - Chemical", "Soil - Physical", "Erosion")
 
+# Create UpSet plot
+fig_field_prop <- upset(prop_f_matrix, mainbar.y.label = "Property Intersections", sets.x.label = "Studies",
+      sets = c("Topography", "Weather", "Size", "Seed Source Prox.", "Disturbance Prox.", "Prior Disturbance", "Zone", "Soil - Chemical", "Soil - Physical", "Erosion"), mb.ratio = c(0.55, 0.45), order.by = "freq", text.scale = 1.7, point.size = 2.2)
+```
 
 ```{r print T/F field results}
 # Group TF columns
@@ -174,9 +169,10 @@ summary_field_TF <- data.frame(
 print(summary_field_TF)
 
 ```
+
 ## Specific T/F results
 
-``` {r comparisons & time & seeds results}
+```{r comparisons & time & seeds results}
 # Comparisons
 field_data <- field_data %>%
   mutate(compare_veg = str_replace(compare_veg, "TRUE - ", ""))
@@ -196,7 +192,7 @@ table(field_data$seeds)
 
 ```
 
-``` {r comparisons results}
+```{r comparisons results}
 groups_field_compare <- list(
   compare_natural = c("natural", "pre-slip"),
   compare_exp = c("planted", "rehabilitated", "fertilized", "terraced", "fenced",
@@ -219,10 +215,9 @@ upset(field_compare_matrix, sets = c("compare_natural","compare_exp", "compare_o
 
 ```
 
-
 ## Plot & plotless
 
-``` {r plot & plotless}
+```{r plot & plotless}
 #primary survey method
 table(field_data$plot_plotless)
 
@@ -231,13 +226,16 @@ field_data$plot_size <- suppressWarnings(as.numeric(field_data$plot_size))
 summary(field_data$plot_size)
 
 #plot size histogram
-ggplot(field_data, aes(x = plot_size)) +
+fig_plot_size <- ggplot(field_data, aes(x = plot_size)) +
   geom_histogram(binwidth = 1, fill = "grey", color = "black", na.rm = TRUE) +
-  scale_x_continuous(trans = 'sqrt', breaks = c(100, 400, 900)) +  # Breaks at squared values
-  labs(title = "Plot size of Field Surveys",
-       x = "Plot size (m2)",
+  scale_x_continuous(trans = 'sqrt') +  # Breaks at squared values
+  labs(x = expression("Plot Size (m"^2*")"),
        y = "Studies") +
-  theme_minimal()
+  theme_light() +
+  theme(
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 13)
+  )
 
 #plotless methods
 field_plotless_methods <- field_data %>%
@@ -245,5 +243,97 @@ field_plotless_methods <- field_data %>%
   separate_rows(plotless_method, sep = ", ")
 
 table(field_plotless_methods$plotless_method)
+
+```
+
+## Chronosequence & Remeasurement
+
+```{r time plots}
+# Remeasurement tidying
+
+field_data$remeasure_visits <- as.numeric(field_data$remeasure_visits)
+
+field_data <- field_data %>%
+  mutate(remeasure_time = remeasure_end - remeasure_start,
+         remeasure_frequency = remeasure_visits / (remeasure_time + 1)) #add one as first visit to site was included in remeasure_visits
+
+# Remeasurement plot
+
+fig_remeasure <- ggplot(field_data, aes(x = remeasure_time, y = (remeasure_frequency))) +
+  geom_point(size = 3, alpha = 0.7) +
+  #scale_y_continuous(trans='sqrt') +
+  labs(
+    x = "Remeasurement Duration (years)",
+    y = "Remeasurement Frequency (years)",
+  ) +
+  theme_light() +
+  theme(
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 13)
+  )
+
+
+# Chronosequence plots
+
+field_data$chrono_age <- as.numeric(field_data$chrono_age)
+
+fig_chrono <- ggplot(field_data, aes(x = "", y = chrono_age)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = 21, outlier.size = 3) +
+    labs(
+    x = "Chronosequence Studies",
+    y = "Age of Oldest Landslide (years)",
+  ) +
+  scale_y_continuous(trans="sqrt") +
+  theme_light()+
+  theme(
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 13)
+  )
+
+ggplot(field_data, aes(x = chrono_age)) +
+  geom_histogram(binwidth = 5, fill = "#6aaed6", color = "black") +
+  labs(x = "Chronosequence Age (years)", y = "Number of Studies") +
+  theme_minimal() 
+
+```
+
+```{r time stats summary}
+# Remeasurement 
+remeasure_studies <- field_data %>%
+  filter(grepl("remeasure", time, ignore.case = TRUE))
+
+summary(remeasure_studies$remeasure_time)
+summary(remeasure_studies$remeasure_frequency)
+
+# Chrono Plots
+
+chrono_studies <- field_data %>%
+  filter(grepl("chronosequence", time, ignore.case = TRUE))
+
+summary(chrono_studies$slip_number)
+
+# Chrono Replicates
+
+table(chrono_studies$chrono_replicate)
+
+# Chrono Age
+
+summary(chrono_studies$chrono_age)
+
+```
+
+
+## Figure Export
+
+```{r figure exporting}
+fig_9 <- fig_slip_num / fig_plot_size
+ggsave("figs/fig_9.svg", plot = fig_9, width = 7, height = 8)
+
+fig_10 <- fig_remeasure + fig_chrono + plot_layout(widths = c(4, 1.1))
+ggsave("figs/fig_10.svg", plot = fig_10, width = 9, height = 5)
+
+pdf("figs/fig_11.pdf", width = 9, height = 5.5)
+print(fig_field_prop)
+dev.off()
 
 ```

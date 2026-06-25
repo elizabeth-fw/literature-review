@@ -10,24 +10,11 @@ output: html_document
 ## Load Packages
 
 ```{r load packages, message = FALSE}
-library(revtools)
-library(synthesisr)
-library(dplyr)
-library(janitor)
 library(tidyverse)
-library(stringr)
-library(tidytext)
-library(widyr)
-library(ggraph)
-library(ggplot2)
 library(maps)
-library(igraph)
-library(base)
-library(stm)
-library(wordcloud)
 library(sf) #vector package
 library(terra) #raster package
-library(ggbreak)
+library(patchwork)
 ```
 
 ## Add Functions
@@ -133,6 +120,9 @@ frf_data <- select(sorted_data, -c(database, document_type, language, volume, ar
                                      n_duplicates, relevant_title, relevant_keyword, relevant, first_screening, screened_titles, second_screen, download, research_rabbit, english, 
                                      review, conference, report_other, dendrogeo, reject_other, coordinates, riparian))
 
+#restrict years to 2024
+frf_data <- frf_data[frf_data$year != 2025, ]
+
 ```
 
 
@@ -150,7 +140,7 @@ frcst_data <- frf_data %>%
 field_data <- frf_data %>%
   filter(str_detect(study_method, "field"))
 
-field_data <- select(field_data, -c(imagery, spectrum, indices, implementation, year_start, year_end, veg_cover, veg_ecotype, veg_other, int_veg_prop, rs_model, ground_truth))
+field_data <- select(field_data, -c(imagery, spectrum, indices, implementation, year_start, year_end, veg_cover, veg_ecotype, veg_other, int_veg_prop, rs_model, valid_imagery, valid_ground))
 
 #split remote sensing papers
 rs_data <- frf_data %>%
@@ -167,8 +157,8 @@ table(frf_data$study_method)
 frf_data <- frf_data %>%
   mutate(method_simple = case_when(
     study_method == "field" ~ "Field",
-    study_method == "remote sensing" ~ "Remote sensing",
-    study_method == "forecast model" ~ "Forecast model",
+    study_method == "remote sensing" ~ "Remote Sensing",
+    study_method == "forecast model" ~ "Forecast Modelling",
     TRUE ~ "Combination"
   ))
 
@@ -198,52 +188,8 @@ write.csv(rs_data, "data_working/rs_data.csv", row.names = FALSE)
 
 ```
 
-## add data from coordinates
-```{r add data from coordinates, message = FALSE}
-# clean coordinates
-frf_data <- frf_data %>%
-  separate(approx_coord, into = c("lat", "long"), sep = ", ", convert = TRUE)
-
-coord_sf <- st_as_sf(frf_data, coords = c("long", "lat"), crs = 4326)
-
-
-#extract worldclim 2.1 data from coordinates
-clim_value <- extract(bioclim_raster, coord_sf, method = "simple")
-
-srad_value <- extract(srad_raster, coord_sf, method = "simple")
-
-srad_value <- srad_value %>%
-  mutate(srad_avg = rowMeans(select(.,2:13), na.rm = TRUE))
-
-frf_data <- cbind(frf_data, clim_value[,-1]) #exclude 1 - ID column
-frf_data$srad_avg <- srad_value$srad_avg
-
-#extract wwf biomes data from coordinates
-biome_value <- st_join(coord_sf, wwf_biomes, join = st_intersects)
-
-frf_data$biome <- biome_value$BIOME
-frf_data$biome_name <-biome_value$BIOME_NAME
-frf_data$eco_name <- biome_value$ECO_NAME
-
-```
-
-
-```{r spatsample random 1000 bioclim points, message = FALSE}
-
-# Generate random control points and convert to df
-clim_ctrl_points <- spatSample(bioclim_raster, size = 1000, na.rm = TRUE, as.points = TRUE)
-clim_ctrl_data <- data.frame(crds(clim_ctrl_points))
-
-# Extract worldclim 2.1 data from coordinates
-clim_ctrl_value <- extract(bioclim_raster, clim_ctrl_points, method = "simple")
-
-clim_ctrl_data <- cbind(clim_ctrl_data, clim_ctrl_value[,-1]) #exclude 1 - ID column
-
-```
-
-
-## Maps of research
-```{r research map}
+## Map of studies by Country
+```{r intensity map by country, message = FALSE}
 # intensity map of countries of all studies
 countries_split <- frf_data %>%
   separate_rows(country, sep = ", ") %>%
@@ -263,57 +209,168 @@ world_map$region <- tolower(world_map$region)
 map_data <- world_map %>%
   left_join(country_counts, by = c("region" = "country"))
 
-ggplot(map_data, aes(x = long, y = lat, group = group)) +
+fig_map_country <- ggplot(map_data, aes(x = long, y = lat, group = group)) +
   geom_polygon(aes(fill = papers), color = "white") +
-  scale_fill_gradient(low = "lightblue", high = "darkblue", na.value = "gray") +
+  scale_fill_gradient(low = "lightblue", high = "darkblue", na.value = "gray90") +
   theme_light() +
   coord_sf(xlim = c(-180, 180), ylim = c(-65, 85), expand = FALSE) +
   scale_x_continuous(name = "Longitude", breaks = seq(-180, 180, by = 60), labels = function(x) ifelse(x == 0, "0", as.character(x))) +
   scale_y_continuous(name = "Latitude", breaks = seq(-60, 85, by = 20), labels = function(y) ifelse(y == 0, "0", as.character(y))) +
-  labs(title = "Color Intensity Map Based on Frequency of Studies",
-       fill = "Studies")
+  theme(
+    axis.title = element_text(size = 14),   # Set axis titles size
+    axis.text = element_text(size = 13),    # Adjust size for x-axis text
+    axis.title.x=element_blank(),
+    axis.text.x=element_blank(),
+    axis.ticks.x=element_blank(),
+    legend.title = element_text(size = 14), # Set legend title size
+    legend.text = element_text(size = 13),   # Adjust legend text size
+    ) +
+  labs(fill = "Studies")
+
+```
+
+## Add data from coordinates
+```{r add data from coordinates, message = FALSE}
+## the one study that studied distinct landslide events in two different countries was manually split for this
+    # keep note that there is one extra dot/study because of this
+coord_data <- read.csv("data_working/coord_split_data.csv") %>%
+  separate(approx_coord, into = c("lat", "long"), sep = ", ", convert = TRUE) %>%
+  mutate(across(c(lat, long), as.numeric))
+
+# Convert to sf
+coord_sf <- st_as_sf(coord_data, coords = c("long", "lat"), crs = 4326)
+
+# Extract WorldClim data
+clim_df <- terra::extract(bioclim_raster, vect(coord_sf)) %>%
+  select(-ID)  # Remove ID column
+
+# Extract srad and compute average
+srad_df <- terra::extract(srad_raster, vect(coord_sf)) %>%
+  select(-ID) %>%
+  mutate(srad_avg = rowMeans(., na.rm = TRUE))
+
+# Join back to coord_data by position
+coord_data <- bind_cols(coord_data, clim_df, srad_avg = srad_df$srad_avg)
+
+# Extract biome information using st_join (may drop points without matches)
+biome_join <- st_join(coord_sf, wwf_biomes, join = st_intersects, left = TRUE)
+
+# Add biome info back (by position — safe if no rows dropped)
+coord_data <- coord_data %>%
+  mutate(
+    biome = biome_join$BIOME,
+    biome_name = biome_join$BIOME_NAME,
+    eco_name = biome_join$ECO_NAME
+  )
+
+```
+
+```{r extract GLC bioclim data, message = FALSE}
+
+# Extract worldclim 2.1 data from coordinates
+nasa_sf <- st_as_sf(nasa_landslides, coords = c("longitude", "latitude"), crs = 4326)
+
+# Extract WorldClim data
+nasa_clim_df <- terra::extract(bioclim_raster, vect(nasa_sf)) %>%
+  select(-ID)  # Remove ID column
+
+# Join back to coord_data by position
+nasa_landslides <- bind_cols(nasa_landslides, nasa_clim_df)
+
+```
 
 
-# dot map of all field & RS & forcast model studies
-ggplot() +
-  borders("world", colour = "gray85", fill = "gray80") +  # Plot the world map
-  geom_point(data = frf_data, aes(x = long, y = lat, colour = method_simple), size = 1.25) +  # Add points
-  scale_color_manual(values = c("Field" = "#e02b35", "Remote sensing" = "#59a89c", "Forecast model" = "#a559aa", "Combination" = "#082a54")) + #Set colors
-  coord_sf(xlim = c(-180, 180), ylim = c(-65, 85), expand = FALSE) +
-  theme_light() +
-  theme(legend.position = "bottom")+
-  labs(title = "Distribution of Research by Study Method",
-       x = "Longitude",
-       y = "Latitude",
-       colour = "Primary Research Method")
+```{r spatsample random 1000 bioclim points, message = FALSE}
 
-# Focus on SE Asia
-ggplot() +
-  borders("world", colour = "gray85", fill = "gray80") +  # Plot the world map
-  geom_point(data = frf_data, aes(x = long, y = lat, colour = method_simple), size = 1.5) +  # Add points
-  scale_color_manual(values = c("Field" = "#e02b35", "Remote sensing" = "#59a89c", "Forecast model" = "#a559aa", "Combination" = "#082a54")) + #Set colors
-  coord_sf(xlim = c(70, 150), ylim = c(10, 50)) +  # Zoom in on the specified region
-  theme_light() +
-  theme(legend.position = "bottom")+
-  labs(title = "Distribution of Research by Study Method (SE Asia)",
-       x = "Longitude",
-       y = "Latitude",
-       color = "Primary Research Method")
+# Generate random control points and convert to df
+clim_ctrl_points <- spatSample(bioclim_raster, size = 1000, na.rm = TRUE, as.points = TRUE)
+clim_ctrl_data <- data.frame(crds(clim_ctrl_points))
+
+# Extract worldclim 2.1 data from coordinates
+clim_ctrl_value <- extract(bioclim_raster, clim_ctrl_points, method = "simple")
+
+clim_ctrl_data <- cbind(clim_ctrl_data, clim_ctrl_value[,-1]) #exclude 1 - ID column
+
+```
+
+
+## Coordinate Maps of Research
+```{r research map}
 
 #Plot of all recovery studies & reported landslides (nasa global landslide catalog)
-ggplot() +
-  borders("world", colour = "gray85", fill = "gray80") +  # Plot the world map
-  geom_point(data = nasa_landslides, aes(x = longitude, y = latitude), color = "gray50", size = 0.1) +  # Background data points in grey, size 0.5
-  geom_point(data = frf_data, aes(x = long, y = lat), color = "black", fill = "white", shape = 21, size = 2) +
+fig_map_slips <- ggplot() +
+  borders("world", colour = "gray80", fill = NA) +  # Plot the world map
+  geom_point(data = nasa_landslides, aes(x = longitude, y = latitude, color = "GLC Landslides", size = "GLC Landslides"), show.legend = TRUE) +
+  geom_point(data = coord_data, aes(x = long, y = lat, color = "Recovery Studies", size = "Recovery Studies"), shape = 21, fill = "#e02b35", alpha = 0.8, show.legend = TRUE) +
+  scale_color_manual(values = c("GLC Landslides" = "gray50", "Recovery Studies" = "gray10")) +
+  scale_size_manual(values = c("GLC Landslides" = 0.5, "Recovery Studies" = 2.3)) +
   coord_sf(xlim = c(-180, 180), ylim = c(-65, 85), expand = FALSE) +
   scale_x_continuous(name = "Longitude", breaks = seq(-180, 180, by = 60), labels = function(x) ifelse(x == 0, "0", as.character(x))) +
   scale_y_continuous(name = "Latitude", breaks = seq(-60, 85, by = 20), labels = function(y) ifelse(y == 0, "0", as.character(y))) +
-  theme_grey() +
-    theme(
-    axis.text.x = element_text(size = 10),  # Adjust size for x-axis text
-    axis.text.y = element_text(size = 10)   # Adjust size for y-axis text
+  theme_light() +
+  theme(
+    axis.title = element_text(size = 14),   # Set axis titles size
+    axis.text = element_text(size = 13),    # Adjust size for x-axis text
+    legend.position = "bottom",             # Position legend at the bottom
+    legend.title = element_text(size = 14), # Set legend title size
+    legend.text = element_text(size = 13),   # Adjust legend text size
+    panel.grid.major = element_blank(),     # Remove major grid lines
+    panel.grid.minor = element_blank()      # Remove minor grid lines
   ) +
-  labs(title = "Distribution of Research and Background Data")
+  labs(color = "",
+       size = "")
+
+```
+
+## Papers by Method Used
+```{r papers by method test}
+
+# Custom color palette
+methods_colors <- c(
+  "Field" = "#e02b35",
+  "Remote Sensing" = "#59a89c",
+  "Forecast Modelling" = "#a559aa",
+  "Combination" = "#082a54"
+)
+
+# Add tighter bottom margin for top row, and tighter top margin for bottom row
+plot_method <- function(method_name, top = FALSE, bottom = FALSE) {
+  df_sub <- coord_data %>% filter(method_simple == method_name)
+
+  top_margin <- if (top) 0 else 10
+  bottom_margin <- if (bottom) 0 else 10
+
+  ggplot() +
+    borders("world", colour = "gray80", fill = NA) +
+    geom_point(
+      data = df_sub,
+      mapping = aes(x = long, y = lat, color = method_simple),
+      size = 2.3, alpha = 0.8
+    ) +
+    scale_color_manual(values = methods_colors, drop = FALSE) +
+    coord_sf(xlim = c(-180, 180), ylim = c(-65, 85), expand = FALSE) +
+    theme_light() +
+    theme(
+      axis.title = element_blank(),
+      axis.text = element_blank(),
+      axis.ticks = element_blank(),
+      panel.grid = element_blank(),
+      plot.title = element_text(size = 15, hjust = 0.5, face = "bold"),
+      legend.position = "none",
+      plot.margin = margin(t = top_margin, r = 6, b = bottom_margin, l = 6)
+    ) +
+    labs(title = method_name)
+}
+
+
+p1 <- plot_method("Field", bottom = TRUE)
+p2 <- plot_method("Remote Sensing", bottom = TRUE)
+p3 <- plot_method("Forecast Modelling", top = TRUE)
+p4 <- plot_method("Combination", top = TRUE)
+
+# Combine plots with default layout (tight vertical space)
+fig_map_methods <- (p1 + p2) / (p3 + p4)
+
 
 ```
 
@@ -321,7 +378,7 @@ ggplot() +
 ```{r papers over time}
 # Set up list of years for x axis
 
-years_all <- data.frame(year = seq(1964, 2024))
+years_all <- data.frame(year = seq(1955, 2024))
 
 
 # All papers published over time
@@ -331,81 +388,74 @@ years_papers <- frf_data %>%
   count(year, name = "count") %>%
   right_join(years_all, by = "year") %>%
   replace_na(list(count = 0)) %>%
-  filter(year <= 2023)
+  filter(year <= 2024)
   
 
 ggplot(years_papers, aes(x = year, y = count)) +
   geom_line() +
   geom_point() +
   geom_smooth(method = "loess", se = FALSE) +
-  scale_x_continuous(breaks = seq(1970, max(years_frf$year), by = 10)) +
+  scale_x_continuous(breaks = seq(1960, max(years_papers$year), by = 10)) +
   theme_minimal() +
   labs(title = "All Papers Published per Year",
        x = "Year") 
 
 
 ```
+
 ## Papers over time - by study method
+
 ```{r}
-#
+methods_all <- unique(frf_data$method_simple)
 
-years_rs <- rs_data %>%
-  count(year, name = "count") %>%
-  right_join(years_all, by = "year") %>%
-  replace_na(list(count = 0)) %>%
-  mutate(type = "Remote Sensing")
+year_method_combinations <- expand.grid(
+  year = years_all$year,
+  method_simple = methods_all
+)
 
-years_field <- field_data %>%
-  count(year, name = "count") %>%
-  right_join(years_all, by = "year") %>%
-  replace_na(list(count = 0)) %>%
-  mutate(type = "Field") 
+years_frf <- expand.grid(
+  year = years_all$year,
+  method_simple = methods_all
+) %>%
+  left_join(
+    frf_data %>% count(year, method_simple, name = "count"),
+    by = c("year", "method_simple")
+  ) %>%
+  replace_na(list(count = 0))
 
-years_frcst <- frcst_data %>%
-  count(year, name = "count") %>%
-  right_join(years_all, by = "year") %>%
-  replace_na(list(count = 0)) %>%
-  mutate(type = "Forecast Modelling")
+frf_method_full <- year_method_combinations %>%
+  left_join(
+    frf_data %>% count(year, method_simple, name = "count"),
+    by = c("year", "method_simple")
+  ) %>%
+  filter(year <= 2024) %>%
+  replace_na(list(count = 0))
 
-years_frf <- bind_rows(years_rs, years_field, years_frcst) %>%
-  filter(year <= 2023)
-
-#add a column to assign the point size for 0s as 0
-years_frf <- years_frf %>%
-  mutate(point_size = ifelse(count == 0, 0, 1.5))
-
-
-# # Former linechart - replaced by stacked barchart below
-# ggplot(years_frf, aes(x = year, y = count, color = type)) +
-#   geom_line() +
-#   geom_point(aes(size = point_size)) +
-#   scale_size_identity() +
-#   geom_smooth(method = "loess", se = FALSE) +
-#   scale_x_continuous(breaks = seq(1970, max(years_frf$year), by = 10)) +
-#   scale_color_manual(values = c("Field" = "#e02b35", "Remote Sensing" = "#59a89c", "Forecast Modelling" = "#a559aa")) +
-#   theme_minimal() +
-#   theme(legend.position = "bottom")+
-#   annotate("text", x = Inf, y = Inf, label = "Total studies = 184", hjust = 4.1, vjust = 1.3, size = 5) +
-#   labs(x = "Year",
-#        y = "Articles",
-#        color = "Primary Research Method")
-
-
-#Plot the number of papers published per year by the study method used
-ggplot(years_frf, aes(x = year, y = count, fill = type)) +
-  geom_bar(stat = "identity", position = "stack") +
-  scale_x_continuous(breaks = seq(1970, max(years_frf$year), by = 10)) +
-  scale_y_continuous(breaks = seq(0, 14, by = 2)) +
-  scale_fill_manual(values = c("Field" = "#e02b35", "Remote Sensing" = "#59a89c", "Forecast Modelling" = "#a559aa")) +
-  theme_minimal() +
-  theme(legend.position = "bottom") +
-  # annotate("text", x = Inf, y = Inf, label = "Total studies = 184", hjust = 4.1, vjust = 1.3, size = 5) +
+# Plot the number of papers published per year by the study method used
+fig_year_method <- ggplot(years_frf, aes(x = year, y = count, fill = method_simple)) +
+  geom_bar(stat = "identity", position = "stack", color = "white", linewidth=0.1) +
+  scale_x_continuous(breaks = seq(1950, max(years_frf$year), by = 10)) +
+  scale_y_continuous(breaks = seq(0, 24, by = 4)) +
+  scale_fill_manual(values = c(
+    "Field" = "#e02b35",
+    "Remote Sensing" = "#59a89c",
+    "Forecast Modelling" = "#a559aa",  #f4a261
+    "Combination" = "#082a54"
+  )) +
+  theme_light() +
+  theme(
+    axis.title = element_text(size = 14),   # Set axis titles size
+    axis.text = element_text(size = 13),    # Adjust size for x-axis text
+    legend.position = c(.23, .81),
+    legend.background = element_rect(fill = "white", color = NA),
+    legend.title = element_text(size = 14), # Set legend title size
+    legend.text = element_text(size = 13)   # Adjust legend text size
+  ) +
   labs(x = "Year",
        y = "Articles",
-       fill = "Primary Research Method")
-
-
+       fill = "Research Method")
 ```
+
 ## Papers over time - by region (defined by UN)
 
 ```{r}
@@ -426,6 +476,15 @@ sort_georegion <- data.frame(
              rep("Oceania", 2),
              rep("Americas", 5)) #south
 )
+
+#Match countries with georegions list above
+frf_data <- frf_data %>%
+  mutate(country = case_when(
+    country == "england" ~ "uk",
+    country == "scotland" ~ "uk",
+    country == "united states" ~ "usa",
+    TRUE ~ country
+  ))
 
 #Create a function to map countries to georegions
 map_to_georegion <- function(countries, sort_georegion) {
@@ -456,71 +515,227 @@ year_region_combinations <- expand.grid(year = years_all$year, georegion = regio
 # Merge with actual data and fill missing counts with 0
 frf_georegion_full <- year_region_combinations %>%
   left_join(frf_georegion, by = c("year", "georegion")) %>%
-  filter(year <= 2023) %>%
+  filter(year <= 2024) %>%
   replace_na(list(count = 0))
 
 #add a column to assign the point size for 0s as 0
 frf_georegion_full <- frf_georegion_full %>%
   mutate(point_size = ifelse(count == 0, 0, 1.5))
 
-# # Former linechart - replaced by stacked barchart below
-# ggplot(frf_georegion_full, aes(x = year, y = count, color = georegion, group = georegion)) +
-#   geom_line() +
-#   geom_point(aes(size = point_size)) +
-#   labs(x = "Year",
-#        y = "Articles",
-#        color = "Geographic Region") +
-#   scale_y_continuous(breaks = seq(0, 14, by = 2)) +
-#   #scale_color_manual(values = c("Americas" = "#0d7d87", "Asia" = "#f55f74", "Europe" = "#4a2377", "Oceania" = "#8cc5e3")) +
-#   theme_minimal() +
-#   theme(legend.position = "bottom") +
-#   scale_size_identity()
 
 #Plot the number of papers published per year by the region
-ggplot(frf_georegion_full, aes(x = year, y = count, fill = georegion)) +
+fig_year_georegion <- ggplot(frf_georegion_full, aes(x = year, y = count, fill = georegion)) +
   geom_bar(stat = "identity", position = "stack") +
   labs(x = "Year",
        y = "Articles",
        fill = "Geographic Region") +
-  scale_x_continuous(breaks = seq(1970, max(years_frf$year), by = 10)) +
-  scale_y_continuous(breaks = seq(0, 14, by = 2)) +
-  # scale_fill_manual(values = c("Americas" = "#0d7d87", "Asia" = "#f55f74", "Europe" = "#4a2377", "Oceania" = "#8cc5e3")) +
-  theme_minimal() +
-  theme(legend.position = "bottom") +
+  scale_x_continuous(breaks = seq(1950, max(years_frf$year), by = 10)) +
+  scale_y_continuous(breaks = seq(0, 25, by = 4)) +
+  #scale_fill_manual(values = c("Americas" = "#424175", "Asia" = "#67902f", "Europe" = "#d38f57", "Oceania" = "#b84054")) +
+  theme_light() +
+  theme(    axis.title = element_text(size = 14),   # Set axis titles size
+    axis.text = element_text(size = 13),    # Adjust size for x-axis text
+    legend.position = c(.23, .81),
+    legend.background = element_rect(fill = "white", color = NA),
+    legend.title = element_text(size = 14), # Set legend title size
+    legend.text = element_text(size = 13)   # Adjust legend text size
+    ) +
   scale_size_identity()
 ```
 
+```{r 5-year changes}
+# 5 year bins and proportions - methods
+frf_5yr_methods <- frf_method_full %>%
+  mutate(
+    period_5yr = paste0(
+      floor((year - 1955) / 5) * 5 + 1955,
+      "–",
+      floor((year - 1955) / 5) * 5 + 1959
+    )
+  ) %>%
+  group_by(period_5yr, method_simple) %>%
+  summarise(count = sum(count), .groups = "drop") %>%
+  group_by(period_5yr) %>%
+  mutate(prop = count / sum(count)) %>%
+  ungroup()
+
+# Visualise 5-year methods
+fig_5year_method <- ggplot(
+  frf_5yr_methods,
+  aes(x = period_5yr, y = prop, fill = method_simple)
+) +
+  geom_bar(stat = "identity", position = "stack", color = "white", linewidth = 0.1) +
+  scale_y_continuous(
+    labels = scales::percent_format(accuracy = 1),
+    expand = expansion(mult = c(0, 0.02))
+  ) +
+  scale_fill_manual(values = c(
+    "Field" = "#e02b35",
+    "Remote Sensing" = "#59a89c",
+    "Forecast Modelling" = "#a559aa",
+    "Combination" = "#082a54"
+  )) +
+  theme_light() +
+  theme(
+    axis.title = element_text(size = 11),
+    axis.text.x = element_text(size = 11, angle = 45, hjust = 1),
+    axis.text.y = element_text(size = 11),
+    legend.position = "bottom",
+    legend.background = element_rect(fill = "white", color = NA),
+    legend.text = element_text(size = 9)
+  ) +
+  labs(
+    x = "Years",
+    y = "Proportion of articles",
+    fill = "Research Method"
+  )
+
+plot(fig_5year_method)
+
+# 5 year bins and proportions - georegion
+frf_5yr_georegion <- frf_georegion_full %>%
+  filter(!is.na(georegion), year >= 1955, year <= 2024) %>%
+  mutate(
+    period_5yr = paste0(
+      floor((year - 1955) / 5) * 5 + 1955,
+      "–",
+      floor((year - 1955) / 5) * 5 + 1959
+    )
+  ) %>%
+  group_by(period_5yr, georegion) %>%
+  summarise(count = sum(count), .groups = "drop") %>%
+  group_by(period_5yr) %>%
+  mutate(prop = count / sum(count)) %>%
+  ungroup()
+
+# Visualise 5-year georegions
+fig_5year_georegion <- ggplot(
+  frf_5yr_georegion,
+  aes(x = period_5yr, y = prop, fill = georegion)
+) +
+  geom_bar(stat = "identity", position = "stack", color = "white", linewidth = 0.1) +
+  scale_y_continuous(
+    labels = scales::percent_format(accuracy = 1),
+    expand = expansion(mult = c(0, 0.02))
+  ) +
+  # Uncomment if you want consistent colours with earlier figures
+  # scale_fill_manual(values = c(
+  #   "Americas" = "#424175",
+  #   "Asia" = "#67902f",
+  #   "Europe" = "#d38f57",
+  #   "Oceania" = "#b84054"
+  # )) +
+   theme_light() +
+  theme(
+    axis.title = element_text(size = 11),
+    axis.text.x = element_text(size = 11, angle = 45, hjust = 1),
+    axis.text.y = element_text(size = 11),
+    legend.position = "bottom",
+    legend.background = element_rect(fill = "white", color = NA),
+    legend.text = element_text(size = 9)
+  ) +
+  labs(
+    x = "Years",
+    y = "Proportion of articles",
+    fill = "Geographic Region"
+  )
+
+plot(fig_5year_georegion)
+
+```
+
 ## Bioclim Results
-````{r biome results}
+```{r biome results}
 #List biomes
-table(frf_data$biome_name)
+table(coord_data$biome_name)
+
+ # ONE LESS tropical & subtropical moist broadleaf forest due to paper double-counted (puerto rico and costa rica)
 ```
 
 ```{r clim results}
 #Combine control and study data
-clim_ctrl_data$method_simple <- "Control"
-#field_rs_data$group <- field_rs_data$study_method
-#field_rs_data$group <- gsub(" & forecast model", "", field_rs_data$group)
+clim_ctrl_data$clim_grouping <- "Control"
+nasa_landslides$clim_grouping <- "Global Landslide Catalog"
+coord_data$clim_grouping <- "Landslide Recovery Studies"
 
 
-clim_combined_pts <- rbind(
-  frf_data[,c("wc2.1_30s_bio_1", "wc2.1_30s_bio_12", "method_simple")],
-  clim_ctrl_data[, c("wc2.1_30s_bio_1", "wc2.1_30s_bio_12", "method_simple")]
-)
+clim_combined_pts <- bind_rows(
+  coord_data %>% select(wc2.1_30s_bio_1, wc2.1_30s_bio_12, clim_grouping),
+  nasa_landslides %>% select(wc2.1_30s_bio_1, wc2.1_30s_bio_12, clim_grouping),
+  clim_ctrl_data %>% select(wc2.1_30s_bio_1, wc2.1_30s_bio_12, clim_grouping))
 
 #Generate climograph(temp v precip) scatterplot of study points and control points
 
-ggplot(clim_combined_pts, aes(x = wc2.1_30s_bio_1, y = wc2.1_30s_bio_12, color = method_simple)) +
-  geom_point(data = subset(clim_combined_pts, method_simple == "Control"), color = "grey", size = 1, alpha = 0.5) +
-  geom_point(data = subset(clim_combined_pts, method_simple != "Control"), size = 2) +
-  labs(title = "Annual Temperature vs Precipitation",
-       x = "Average Annual Temperature (°C)",
+fig_clim <- ggplot(clim_combined_pts, aes(x = wc2.1_30s_bio_1, y = wc2.1_30s_bio_12, color = clim_grouping)) +
+  geom_point(data = subset(clim_combined_pts, clim_grouping == "Global Landslide Catalog"), size = 1, alpha = 0.8) +
+  geom_point(data = subset(clim_combined_pts, clim_grouping == "Control"), size = 1, alpha = 0.8) +
+  geom_point(data = subset(clim_combined_pts, clim_grouping == "Landslide Recovery Studies"), size = 2.5, alpha = 0.8) +
+  labs(x = "Average Annual Temperature (°C)",
        y = "Average Annual Precipitation (mm)",
-       colour = "Primary Research Method",
-       caption = "Each grey dot represents a randomly sampled control point.") +
-  scale_color_manual(values = c("Field" = "#e02b35", "Remote sensing" = "#59a89c", "Forecast model" = "#a559aa", "Combination" = "#082a54", "Control" = "grey")) +
-  theme_minimal() +
-  theme(legend.position = "bottom")
+       colour = " ") +
+  scale_color_manual(
+    values = c("Landslide Recovery Studies" = "#e02b35", "Global Landslide Catalog" = "grey70", "Control" = "grey10"),
+    breaks = c("Landslide Recovery Studies", "Global Landslide Catalog", "Control")) +
+    guides(color = guide_legend(
+    override.aes = list(
+    size = c(2.5, 1.5, 1.5),
+    alpha = c(1, 0.8, 0.8)))) +
+  scale_y_continuous(breaks = seq(0, 8000, by = 1000)) +
+  theme_light() +
+  theme(legend.position = "bottom",
+    legend.title = element_blank(), #element_text(size = 14),
+    legend.text = element_text(size = 14),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 13))
+    #axis.text.y = element_text(size = 13, angle = 45, hjust = 1))
+
+plot(fig_clim)
+
+```
+
+```{r clim stats}
+# bio_1 is temp and bio_12 is precip
+# get mean and standard deviation
+
+# Temp Means
+mean(coord_data$wc2.1_30s_bio_1, na.rm = TRUE)
+mean(clim_ctrl_data$wc2.1_30s_bio_1)
+
+# Temp Standard deviations
+sd(coord_data$wc2.1_30s_bio_1, na.rm = TRUE)
+sd(clim_ctrl_data$wc2.1_30s_bio_1)
+
+# Temp non-parametric test
+wilcox.test(coord_data$wc2.1_30s_bio_1, clim_ctrl_data$wc2.1_30s_bio_1)
+
+#Precip Means
+mean(coord_data$wc2.1_30s_bio_12, na.rm = TRUE)
+mean(clim_ctrl_data$wc2.1_30s_bio_12)
+
+#Precip Standard deviations
+sd(coord_data$wc2.1_30s_bio_12, na.rm = TRUE)
+sd(clim_ctrl_data$wc2.1_30s_bio_12)
+
+#Precip non-parametric test
+wilcox.test(coord_data$wc2.1_30s_bio_12, clim_ctrl_data$wc2.1_30s_bio_12)
+
+```
+
+
+``` {r figure exporting}
+fig_3 <- (fig_map_country / fig_map_slips)
+ggsave("figs/fig_3.tiff", plot = fig_3, height = 7, width = 8, dpi = 300)
+ggsave("figs/fig_3.svg", plot = fig_3, height = 7, width = 8)
+
+ggsave("figs/fig_4.svg", plot = fig_map_methods, width = 9, height = 5)
+
+ggsave("figs/fig_5.png", plot = fig_clim, width = 8, height = 5)
+
+fig_6 <- (fig_year_method / fig_year_georegion) #+ plot_layout(axes = "collect", guides = "collect")
+
+print(fig_6)
+
+ggsave("figs/fig_6.svg", plot = fig_6, width = 7, height = 9)
 
 ```
 

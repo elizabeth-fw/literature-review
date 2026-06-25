@@ -12,18 +12,14 @@ output: html_document
 ```{r load packages, message = FALSE}
 library(revtools)
 library(synthesisr)
-library(dplyr)
 library(janitor)
 library(tidyverse)
-library(stringr)
-library(tidytext)
-library(widyr)
-library(ggraph)
-library(ggplot2)
-library(igraph)
-library(base)
+library(tidytext) #used for exploring data (unnesting authors and keywords)
+library(widyr) #used for exploring data (pairwise for keyword co-occurrence)
+library(ggraph) #used for exploring data (keyword co-occurrence)
+library(igraph) #used for exploring data (keyword co-occurrence)
 library(stm)
-library(wordcloud)
+library(wordcloud) #used for exploring data
 ```
 
 ## Import data from working directory

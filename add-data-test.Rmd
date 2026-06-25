@@ -5,7 +5,7 @@ date: "2023-11-29"
 ---
 
 ```{r add data}
-add_ris_files <- list.files(path = "add_data", pattern = ".ris", full.names = TRUE)
+add_ris_files <- list.files(path = "data_add", pattern = ".ris", full.names = TRUE)
 
 add_data_raw <- read_refs(add_ris_files, return_df = TRUE, verbose = TRUE)
 
@@ -39,37 +39,40 @@ add_data_lowercase <- add_data_lowercase %>%
 add_data_wrangled <- select(add_data_lowercase, -c("a1", "ji", "j9", "c6", "date_generated", "supertaxa", "a2", "fu", "fx", "edition", "url", "cr", "accession_zr", "proceedings_title", "pubmed_id", "chemicals", "source_abbreviated", "zz"))
 
 
-# find and remove results in languages other than english
-
-add_data_english <- add_data_wrangled%>%
-  filter(language == "english")
-
 # find and remove duplicates by DOI
 
-add_data_unique_doi <- deduplicate(add_data_english, "doi", method = "exact")
+add_data_unique_doi <- deduplicate(add_data_wrangled, "doi", method = "exact")
 
 # find and remove duplicates by title
 
 add_data_unique <- deduplicate(add_data_unique_doi, "title", rm_punctuation = TRUE)
 
+# find and remove results in languages other than english
+
+add_data_english <- add_data_unique%>%
+  filter(language == "english")
 
 # filtering for landslide specific projects by title/keyword
 
 strings <- c("landsli", "mudsli", "rocksli", "mass movement", "mass wast", "debris avalanche", "debris flow", "mudflow", "rockflow", "lahar")
 
-add_data_unique <- add_data_unique %>%
+add_data_english <- add_data_english %>%
   mutate(relevant_title = (str_detect(title, paste(strings, collapse = "|")))) %>%
   mutate(relevant_keyword = (str_detect(keywords, paste(strings, collapse = "|")))) %>%
   mutate(relevant = if_any(.cols = contains('relevant')))
 
-add_data_landslides <- add_data_unique %>%
+add_data_landslides <- add_data_english %>%
   filter(relevant == "TRUE")
 
-add_data_new <- anti_join(add_data_landslides, data_landslides, by = "title")
+add_data_2024 <- add_data_landslides %>%
+  filter(year != "2025")
+
+add_data_new <- anti_join(add_data_2024, screened_2024, by = "title")
+
+##Manually screened titles and found two more duplicates
 
 write.csv(add_data_new, "add_data_new.csv")
 
-#screening_sixth <- read.csv("screening_fourth_attempt_2023-11-29.csv")
 
 ```
 
@@ -82,6 +85,81 @@ write.csv(add_data_new, "add_data_new.csv")
 
 #write.csv(add_abstracts_screened, "add_abstracts_screened.csv")
 
-screening_sixth <- read.csv("screening_sixth.csv")
+screened_2024 <- read.csv("archive/abstracts_screened_2.csv")
 
 ```
+
+## Screen New Abstracts
+```{r Screen new abstracts}
+
+# add_screening <- add_data_new
+# 
+# for (i in 30:219) {
+#   add_screening[,i] <- NA  
+# }
+# 
+# colnames(add_screening)[30] = "screened_titles"
+# colnames(add_screening)[31] = "first_screening"
+# 
+# add_titles_screened <- screen_titles(add_titles_screened)
+# 
+# add_first_screen <- add_titles_screened %>%
+#   filter(screened_titles == "selected")
+# 
+# add_first_screen <- subset(add_first_screen, select = -(127:220))
+# 
+# 
+# add_first_screen <-screen_abstracts(add_first_screen)
+# 
+# write.csv(add_first_screen, "add_abst_screened.csv")
+# 
+# ##add_first_screen <- read.csv("add_abst_screened.csv")
+# 
+# add_selected <- add_first_screen %>%
+#   filter(screened_abstracts == "selected") %>%
+#   subset(select = -(32:127))
+# 
+# write.csv(add_selected, "add_selected.csv")
+
+
+```
+
+
+```{r}
+##Tidy up everything to ensure no duplicates made it through earlier this year
+
+#Tidy titles screened
+
+add_titles_screened <- read.csv("archive/add_titles_screened.csv")
+
+add_titles_screened_june <- filter(add_titles_screened, title %in% add_data_new$title)
+
+#Tidy abst screened
+
+add_abst_screened <- read.csv("archive/add_abst_screened.csv")
+
+add_abst_screened_june <- filter(add_abst_screened, title %in% add_titles_screened_june$title)
+
+#Tidy selected abst
+
+add_selected <- read.csv("archive/add_selected.csv")
+
+add_selected_june <- filter(add_selected, title %in% add_abst_screened_june$title)
+
+all_selected_clean <- deduplicate(all_selected_june, "doi", method = "exact")
+
+##Double check everything matches
+
+write.csv(add_selected_june, "archive/add_selected_june.csv")
+
+all_selected_new <- read.csv("archive/all_selected_june.csv")
+all_selected_orig <- read.csv("data_working/metadata_R_input.csv")
+
+unique_comp1 <- anti_join(all_selected_orig, all_selected_clean, by = "title")
+
+unique_comp2 <- anti_join(all_selected_clean, all_selected_OG, by = "title")
+
+abstracts_screened_OG <- read.csv("archive/abstracts_screened_2.csv")
+
+```
+

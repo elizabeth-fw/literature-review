@@ -8,25 +8,10 @@ output: html_document
 ## Load Packages
 
 ```{r load packages, message = FALSE}
-library(revtools)
-library(synthesisr)
-library(dplyr)
-library(janitor)
 library(tidyverse)
-library(stringr)
-library(tidytext)
-library(widyr)
-library(ggraph)
-library(ggplot2)
-library(maps)
-library(igraph)
-library(base)
-library(stm)
-library(wordcloud)
-library(sf) #vector package
-library(terra) #raster package
-library(ggbreak)
+# library(ggbreak) # not needed for current maps
 library(UpSetR)
+library(svglite) #for exporting svg 
 ```
 
 ## Add Functions
@@ -63,21 +48,48 @@ rs_data <- rs_data %>%
 
 #Plot spatial v temporal scale
 
-ggplot(rs_data, aes(x = study_scale, y = year_range)) +
-  geom_point(size = 2) +
-  labs(title = "Temporal & Spatial Scale of Remote Sensing Research",
-       x = "Study extent (km2)",
-       y = "Temporal scale (year range)") +
-  theme_minimal() +
-  #scale_x_break(c(50000, 100000)) +
-  scale_x_continuous(trans='sqrt') +  #or log2 or log10
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis text labels
+fig_rs_scale <- ggplot(rs_data, aes(x = study_scale, y = year_range)) +
+  geom_rect(
+    xmin = 0, xmax = 38.73,
+    ymin = 0, ymax = 20,
+    fill = NA,
+    color = "red",      # dark grey
+    linetype = "dashed",
+    linewidth = .3) +
+  geom_point(size = 2.5, alpha = .7) +
+  labs(x = expression("Study Extent (km"^2*")"),
+       y = "Temporal Duration (years)") +
+  theme_light() +
+  ylim(0,60) +
+  scale_x_continuous(trans='sqrt') +
+  #geom_hline(yintercept = 20, linetype = "dashed") +
+  #geom_vline(xintercept = 1500, linetype = "dashed") +
+  theme(
+    axis.title = element_text(size = 16),   # Set axis titles size
+    axis.text = element_text(size = 15),    # Adjust size for x-axis text
+    axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis text labels
+
+print(fig_rs_scale)
 
 #HEXBIN plot or log transform the x axis
 # the spatial and temporal domains of modern ecology reference
 
 summary(rs_data$year_range)
 summary(rs_data$study_scale)
+summary(rs_data$slip_number)
+
+# plot years studied
+fig_rs_years <- ggplot(rs_data, aes(x = year_start, y = year_end)) +
+  geom_point(size = 2.5, alpha = .7) +
+  labs(x = expression("Year start"),
+       y = "Year end") +
+  theme_minimal() +
+  theme(
+    axis.title = element_text(size = 14),   # Set axis titles size
+    axis.text = element_text(size = 13),    # Adjust size for x-axis text
+    axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis text labels
+
+#print(fig_rs_years)
 ```
 
 ## Imagery
@@ -90,7 +102,8 @@ table(rs_data$imagery)
 
 imagery_names <- c("landsat", "spot", "modis", "sentinel", "worldview", "aerial",
                    "rapideye", "planet", "photo", "quickbird", "lidar", "proba", 
-                   "formosat", "irs-liss-ii", "hj-1")
+                   "formosat", "irs-liss-ii", "huan jing", "gaofen", "ikonos", 
+                   "ziyuan", "google earth")
 
 
 imagery_counts <- map_dbl(imagery_names, function(name) {
@@ -102,6 +115,7 @@ summary_imagery <- setNames(imagery_counts, imagery_names)
 print(summary_imagery)
 
 ```
+
 ```{r}
 # simplify imagery
 groups_rs_imagery <- list(
@@ -118,23 +132,28 @@ groups_rs_imagery <- list(
   lidar = c("lidar"),
   proba = c("proba"),
   formosat = c("formosat"),
-  irs_liss_ii = c("irs-liss-ii"),
-  hj_1 = c("hj-1")
+  irs_liss = c("irs-liss-ii"),
+  huanjing = c("huan jing"),
+  gaofen = c("gaofen"),
+  ikonos = c("ikonos"),
+  ziyuan = c("ziyuan"),
+  google = c("google earth")
 )
 
-# sort property interaction results into the set groups
+# sort imagery results into the set groups
 for (group in names(groups_rs_imagery)) {
   rs_data[[group]] <- sapply(rs_data$imagery, function(x) check_terms(x, groups_rs_imagery[[group]]))
 }
 
-# Select only the columns specified in the groups_field_prop list
+# Select only the columns specified in the imagery list
 imagery_rs_matrix <- rs_data %>%
   select(all_of(names(groups_rs_imagery))) %>%
   mutate(across(everything(), as.integer))  # TRUE/FALSE to 1/0
 
 # Create UpSet plot
 upset(imagery_rs_matrix, sets = c("landsat", "spot", "modis", "sentinel", "worldview", "aerial", "rapideye", 
-      "planet", "photo", "quickbird", "lidar", "proba", "formosat", "irs_liss_ii", "hj_1"),
+      "planet", "photo", "quickbird", "lidar", "proba", "formosat", "irs_liss", "huanjing", "gaofen", "ikonos",
+      "ziyuan", "google"),
       mb.ratio = c(0.55, 0.45), order.by = "freq")
 
 ```
@@ -154,15 +173,14 @@ for (col in tmp_rs_convert) {
 # group property interactions
 groups_rs_prop <- list(
   prop_topo = c("slope", "aspect", "elevation", "curvature", "convergence index", 
-                 "topographic wetness index", "TWI", "roughness"),
-  prop_litho = c("lithology", "parent material", "substrate", "erodibility"),
-  prop_weather = c("exposure", "solar", "temp", "rain", "precip", "wind", "snow"),
+                 "topographic wetness index", "TWI", "roughness", "tpi"),
+  prop_geology = c("lithology", "parent material", "substrate", "erodibility", "soil OC", "soil ph"),
+  prop_weather = c("exposure", "solar", "temp", "rain", "precip", "wind", "snow", "swi"),
   prop_age = c("age"),
-  prop_size = c("size", "perimeter", "area"),
+  prop_size = c("size", "perimeter", "area", "width"),
   prop_veg = c("veg", "land use", "tree"),
   prop_disturb_prox = c("distance", "proximity", "association"),
-  prop_zone = c("zone"),
-  prop_nutrients = c("soil OC", "soil ph")
+  prop_zone = c("zone")
 )
 
 # sort property interaction results into the set groups
@@ -181,11 +199,14 @@ Terms included in disturbance proximity properties: c("distance to infrastructur
 # Select only the columns specified in the groups_field_prop list
 prop_rs_matrix <- rs_data %>%
   select(all_of(names(groups_rs_prop))) %>%
-  mutate(across(everything(), as.integer))  # TRUE/FALSE to 1/0
+  mutate(across(everything(), as.integer)) # TRUE/FALSE to 1/0
+
+colnames(prop_rs_matrix) = c("Topography", "Geology", "Weather", "Age", "Size", "Vegetation", "Disturbance Prox.", "Zone")
 
 # Create UpSet plot
-upset(prop_rs_matrix, sets = c("prop_topo", "prop_litho", "prop_weather", "prop_age", "prop_size", 
-      "prop_veg", "prop_disturb_prox", "prop_zone", "prop_nutrients"), mb.ratio = c(0.55, 0.45), order.by = "freq")
+fig_rs_prop <- upset(prop_rs_matrix, mainbar.y.label = "Property Intersections", sets.x.label = "Studies",
+      sets = c("Topography", "Geology", "Weather", "Age", "Size", "Vegetation", "Disturbance Prox.", "Zone"), mb.ratio = c(0.55, 0.45),
+      order.by = "freq", text.scale = 1.7, point.size = 2.3)
 ```
 
 
@@ -215,18 +236,24 @@ rs_model_papers <- rs_data %>%
 
 ```
 
-#Cleaning ground truthing
+#Cleaning validation
 
 ```{r ground truthing}
-# split ground truth into 3 categories
-
+# split imagery validation into 3 categories
 rs_data <- rs_data %>%
-  mutate(ground_truth = case_when(
-    grepl("partial", ground_truth, ignore.case = TRUE) ~ "partial",
-    grepl("full", ground_truth, ignore.case = TRUE) ~ "full",
+  mutate(valid_imagery = case_when(
+    grepl("partial", valid_imagery, ignore.case = TRUE) ~ "partial",
+    grepl("TRUE", valid_imagery, ignore.case = TRUE) ~ "TRUE",
     TRUE ~ "FALSE"
   ))
 
+# split ground truth into 3 categories
+rs_data <- rs_data %>%
+  mutate(valid_ground = case_when(
+    grepl("partial", valid_ground, ignore.case = TRUE) ~ "partial",
+    grepl("full", valid_ground, ignore.case = TRUE) ~ "full",
+    TRUE ~ "FALSE"
+  ))
 
 ```
 
@@ -240,9 +267,9 @@ print(summary_imagery)
 
 # Group TF columns
 summary_rs_columns <- c("veg_cover_TF", "veg_ecotype_TF", "veg_other_TF", "int_veg_prop_TF", 
-                     "rs_model_TF", "prop_topo", "prop_litho", "prop_weather", "prop_age", 
+                     "rs_model_TF", "prop_topo", "prop_geology", "prop_weather", "prop_age", 
                      "prop_size", "prop_veg", "prop_disturb_prox", "prop_zone", 
-                     "prop_nutrients", "deep_learning", "statistical")
+                     "deep_learning", "statistical")
 
 # Extract relevant columns
 rs_to_summarize <- rs_data[summary_rs_columns]
@@ -261,14 +288,29 @@ summary_rs_TF <- data.frame(
 # Display the final summary table
 print(summary_rs_TF)
 
-
-# Summarizing ground_truth
-summary_ground_truth <- rs_data %>%
-  group_by(ground_truth) %>%
+# Summarizing imagery validation
+summary_valid_imagery <- rs_data %>%
+  group_by(valid_imagery) %>%
   summarize(count = n())
 
-print(summary_ground_truth)
+print(summary_valid_imagery)
+
+# Summarizing ground_truth
+summary_valid_ground <- rs_data %>%
+  group_by(valid_ground) %>%
+  summarize(count = n())
+
+print(summary_valid_ground)
 
 ```
 
+
+``` {r figure exporting}
+ggsave("figs/fig_7.svg", plot = fig_rs_scale, width = 9, height = 6)
+
+pdf("figs/fig_8.pdf", width = 9, height = 5)
+print(fig_rs_prop)
+dev.off()
+
+```
 
